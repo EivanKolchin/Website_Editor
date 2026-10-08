@@ -112,10 +112,13 @@ move it. Drag a number's label sideways to change it; the page shows the
 result straight away.
 
 **Animations, frame by frame.** A timeline freezes, plays, slows (to a half,
-a quarter or a tenth) and steps the page a frame forward or back, and scrubs
-it by dragging. CSS animations appear as keyframe tracks: click a keyframe,
-change its values, see it at once, save it into the `@keyframes` where it
-lives.
+a quarter or a tenth) and steps the page a frame forward or back; drag the
+time sideways to run the clock by hand. Its bar is the page's scroll, which
+is where a scroll-driven page keeps its animations: drag the red line to any
+point and a preview window shows the page there, let go and the page goes
+there, `Esc` changes your mind. CSS animations appear as keyframe tracks:
+click a keyframe, change its values, see it at once, save it into the
+`@keyframes` where it lives.
 
 **Trace everything to its file.** The Source tab names the line that writes
 the element, the line that writes its words, every stylesheet rule that
@@ -207,7 +210,8 @@ Four habits cover almost everything:
 | a style on this element or its rule | Properties: type a value; "rule" switches to editing the rule |
 | a colour | the drop under the selection, or `I` to pick one off the page and edit it where it is written |
 | a value in code | Settings: type, choose, switch, or drag a number's label |
-| an animation | the timeline to play, freeze, slow or step (`,` and `.`); Motion to edit keyframes |
+| an animation | the timeline to play, freeze, slow or step (`,` and `.`), or drag its time; Motion to edit keyframes |
+| a point further down a scroll-driven page | drag the red line on the timeline's bar: previewed while held, gone to on release |
 | find something | `Ctrl`+`K` or `/` |
 | see where it is written | Source: every line opens in your editor |
 | delete | `Delete` |

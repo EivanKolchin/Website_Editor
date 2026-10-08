@@ -7,6 +7,7 @@ import { createInspector, INSPECTOR_CSS } from './inspector.js'
 import { colorDistance, parseColor, rgbToHex } from './palette.js'
 import { createCanvasRecorder, findAgain, itemName, itemsAt, pageRect, scaleFor, siteOf } from './canvas.js'
 import { createPicker, pixelOf } from './pick.js'
+import { scrollState, scrollToFraction } from './scroll.js'
 import { baseOf, countStamps, fiberOf, isSvgChild, peersOf, unitChain, unitFor } from './react.js'
 import { alignmentGuides, collectGroupTargets, collectTargets, createGuideLayer, dropMoving, rectOf, snapAngle, snapMove, snapScale, unionBox } from './snap.js'
 import { applyText, blockFor, startEditing, textNodes } from './text.js'
@@ -1866,6 +1867,26 @@ export function createApp(boot, hot) {
   }
 
   /**
+   * HOW MUCH OF AN ELEMENT CAN BE SEEN: its opacity times every ancestor's.
+   * checkVisibility's opacity test is for exactly 0, and pages fade what
+   * they are not showing to NEARLY nothing instead: a scene-by-scene landing
+   * keeps every other scene's words painted at 0.003 so they appear without
+   * a stall, and on a phone all of them sit in the same place. A tap on the
+   * words that showed found the faded ones laid over them, and opened words
+   * nobody could see for editing. Below FAINT, words cannot be read, so a
+   * tap never means them; Layers and search still reach them.
+   */
+  const FAINT = 0.08
+  function seenOpacity(el, memo) {
+    if (!el || el === document.documentElement) return 1
+    if (memo?.has(el)) return memo.get(el)
+    const own = Number(getComputedStyle(el).opacity)
+    const a = (Number.isFinite(own) ? own : 1) * seenOpacity(el.parentElement, memo)
+    memo?.set(el, a)
+    return a
+  }
+
+  /**
    * THE WORDS UNDER A POINT, found by where text is LAID OUT rather than by
    * the browser's hit test. The hit test skips anything with
    * pointer-events: none - which is exactly how a page lets a drag reach the
@@ -1876,6 +1897,7 @@ export function createApp(boot, hot) {
    */
   function textAt(x, y) {
     let best = null
+    const shown = new Map() // element -> how much of it can be seen
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => {
         const p = n.parentElement
@@ -1899,6 +1921,7 @@ export function createApp(boot, hot) {
       range.selectNodeContents(n)
       if (![...range.getClientRects()].some(near)) continue
       if (p.checkVisibility && !p.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue
+      if (seenOpacity(p, shown) < FAINT) continue
       best = n
     }
     if (!best) return null
@@ -5203,6 +5226,18 @@ export function createApp(boot, hot) {
     time: () => boot.time?.() ?? 0,
     seekBy: (ms) => {
       boot.step?.(ms)
+      drawings.time = null
+      renderBar()
+    },
+    // the page's scroll, for the timeline's bar (scroll.js): where it is, as a fraction of its range
+    scroll: () => {
+      const s = scrollState(window)
+      return s && { p: s.p, range: s.range, screen: s.screen }
+    },
+    // and a move there, let go of on the bar: a frozen page draws nothing by itself, so it is shown the new place
+    scrollTo: (p) => {
+      if (!scrollToFraction(window, p)) return
+      if (boot.isFrozen?.()) boot.step?.(0)
       drawings.time = null
       renderBar()
     },

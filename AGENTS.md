@@ -103,7 +103,18 @@ read **Changing Retouch** first; it has rules that are easy to break.
     and step it forwards and BACK (`R.step(ms)`), and every time-driven
     drawing follows. CSS animations are scrubbed through the Web Animations
     API; their `@keyframes` are read from the CSSOM, located in source, and
-    edited with a live preview (`decl` ops into the keyframe).
+    edited with a live preview (`decl` ops into the keyframe). The studio's
+    timeline runs the clock by dragging its TIME readout, and its bar is the
+    page's SCROLL, because a scroll-driven page keeps its animations there
+    and a clock moved alone never reached them. `src/client/scroll.js` finds
+    the scroller (the one with the most scroll, weighted by how much of the
+    window it covers; an `overflow: hidden` box only when laid-out boxes run
+    past it, since transforms inflate `scrollHeight` too) and speaks in
+    fractions of its range. The needle goes wherever it is put; while it is
+    held, a second copy of the page framed as `retouch-preview` shows that
+    point (no editor boots in it, it ignores the stored clock, and it is
+    frozen between drags), and letting go scrolls the real page there
+    (`ctl.scrollTo`, which steps a frozen page once so it redraws).
 13. **Depth and search**: the depth rail over the selection, the right-click
     list of everything under the pointer, and the search panel
     (`src/client/finder.js`, Ctrl+K) are all ways to reach something a click
@@ -114,7 +125,11 @@ read **Changing Retouch** first; it has rules that are easy to break.
     never shifts anything. Shift+click adds or removes; Ctrl+A takes the
     selection's siblings. WORDS FIRST: `textAt` finds text by where it is
     laid out, not by the hit test, because pages put `pointer-events: none`
-    on their headlines so drags reach the stage beneath; `textBlockOf`
+    on their headlines so drags reach the stage beneath, and only words that
+    can be SEEN: below `FAINT` (0.08) of opacity, its own times every
+    ancestor's, words are never what a tap means, because pages keep what
+    they are not showing painted at nearly nothing, often in the same place
+    as what they are (`seenOpacity`); `textBlockOf`
     then climbs from a word or line span to the heading, paragraph or key it
     belongs to. A second tap on selected words starts typing there, and
     `startEditing` opens up `pointer-events` and `user-select` on the
@@ -460,6 +475,7 @@ to the folder the Retouch folder sits in, and `vite.configFile` to whichever
 | `src/client/geometry.js` | the transform maths shared by preview and save |
 | `src/client/snap.js` | smart guides: snap targets, move/resize/turn snapping, the guide layer |
 | `src/client/react.js` | fiber walking: units, counts, instances |
+| `src/client/scroll.js` | the page's main scroller, and positions on it as fractions: the timeline's bar and its preview |
 | `src/client/text.js` | in-place text editing that leaves React's nodes intact |
 | `src/client/color.js`, `palette.js` | the colour panel and its curated palette |
 | `src/ai/map.mjs` | the optional model-driven wiring |
@@ -524,6 +540,10 @@ Rules, each learned the hard way:
 19. **Find text by its layout, not by the hit test.** Never go back to
     `elementFromPoint` or the caret lookup alone for "what words are here":
     both skip `pointer-events: none`, which is how pages lay out headlines.
+    And never drop the faintness test: `checkVisibility` only catches an
+    opacity of exactly 0, and a landing page that keeps its next scene at
+    0.003 over the current one had a tap on visible words open invisible
+    ones for typing.
 20. **Nothing new appears without being written.** New text and pastes are
     saved at once and shown by hot reload; there is no preview of an element
     that does not exist in the source yet.
@@ -531,6 +551,11 @@ Rules, each learned the hard way:
     thousands of pixels across is not painted; keep them to the viewport.
 22. `node test/run.mjs` must pass. A new edit kind gets a case that states the
     exact text it expects in the saved file.
+23. **The timeline's preview is never an editor.** The copy framed as
+    `retouch-preview` must not boot `app.js` (it would attach to the studio
+    in place of the real page) nor read the real page's stored clock state;
+    it shares the tab's sessionStorage, so anything new the head script or
+    the editor restores from there has to skip it too.
 
 ## Known limits
 
