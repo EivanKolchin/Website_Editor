@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# The Windows launcher keeps CRLF, which is what cmd.exe expects to read
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Shell scripts keep LF, or sh refuses them
+*.sh text eol=lf

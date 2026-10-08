@@ -1,0 +1,34 @@
+{
+  "name": "retouch",
+  "version": "0.1.0",
+  "description": "Edit a running Vite + React site in place - text, position, size, rotation, colour, deletion - and save the changes back to the source code. No AI in the edit path.",
+  "type": "module",
+  "bin": {
+    "retouch": "bin/retouch.mjs"
+  },
+  "scripts": {
+    "start": "node bin/retouch.mjs",
+    "doctor": "node bin/retouch.mjs doctor",
+    "map": "node bin/retouch.mjs map",
+    "test": "node test/run.mjs"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.24.0"
+  },
+  "retouchNotes": {
+    "vite": "Not a dependency: Retouch drives the project's own Vite, resolved from the project.",
+    "@anthropic-ai/sdk": "Optional, only for `retouch map`. Install it here by hand if you want that command."
+  },
+  "files": [
+    "bin",
+    "src",
+    "AGENTS.md",
+    "README.md",
+    "Retouch.cmd",
+    "retouch.sh",
+    "retouch.config.example.mjs"
+  ]
+}

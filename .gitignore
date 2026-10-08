@@ -1,0 +1,35 @@
+# Dependencies. Commit package-lock.json once `npm install` has made one,
+# so every copy installs the same versions.
+node_modules/
+
+# THE WIRING FOR WHICHEVER PROJECT THIS COPY LIVES IN.
+# Everything specific to one project - its config, its adapters, the AI
+# mapping report - goes in local/, and local/ never leaves the machine.
+# That is what keeps this repository generic: clone it into any project,
+# wire it there, and nothing project-shaped can be committed back.
+local/
+
+# API keys for the optional `retouch map` command
+.env
+.env.*
+!.env.example
+
+# Written by the tool itself while it runs
+.retouch/
+*.retouch.tmp
+
+# Packaging and test output
+*.tgz
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS and editors
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
