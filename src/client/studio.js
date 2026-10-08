@@ -1,6 +1,7 @@
 import { createFinder, FINDER_CSS } from './finder.js'
 import { createInspector, INSPECTOR_CSS } from './inspector.js'
 import { createLayers, LAYERS_CSS } from './layers.js'
+import { scrollToFraction } from './scroll.js'
 import { h, icon, zoomKeyOf } from './ui.js'
 
 /**
@@ -11,7 +12,8 @@ import { h, icon, zoomKeyOf } from './ui.js'
  *           drawings) and Changes (what is not saved yet)
  *   right   Properties: Design, Settings, Motion, Source
  *   below   the timeline: the page's clock, played, frozen, stepped and
- *           scrubbed a frame at a time
+ *           run by dragging its time; and the page's scroll as a bar whose
+ *           needle goes wherever it is put, previewed while it is held
  *
  * The editor itself still runs INSIDE the page (src/client/app.js) - the
  * selection box, the handles, the guides, the depth rail and the text
@@ -156,11 +158,34 @@ select option { background: #1c1c22; }
 
 /* the timeline */
 .bottom { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px; padding: 0 10px; background: var(--panel); border-top: 1px solid var(--line); color: var(--mut); font-size: 12px; white-space: nowrap; min-width: 0; }
-.bottom .time { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 70px; text-align: right; padding-right: 4px; }
-.bottom .jog { position: relative; flex: 0 1 320px; min-width: 120px; height: 24px; border-radius: 7px; background: rgba(255,255,255,0.04); border: 1px solid var(--line); cursor: ew-resize; overflow: hidden; touch-action: none; }
-.bottom .jog::before { content: ''; position: absolute; inset: 0; background-image: repeating-linear-gradient(90deg, rgba(255,255,255,0.12) 0 1px, transparent 1px 12px); background-position: var(--jx, 0) 0; opacity: 0.6; }
-.bottom .jog::after { content: 'drag to move the clock'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--faint); font-size: 10.5px; }
-.bottom .jog .needle { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; background: #ff5c8a; }
+/* the time is the clock's jog: drag it sideways and the clock runs with the pointer */
+.bottom .time { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 70px; text-align: right; padding: 4px 6px 4px 4px; border-radius: 6px; cursor: ew-resize; touch-action: none; user-select: none; }
+.bottom .time:hover, .bottom .time.on { background: rgba(255,255,255,0.06); }
+/* the bar is the page's scroll, top to bottom: the needle is where the page is, and goes wherever it is put */
+.bottom .seek { position: relative; flex: 1 1 360px; min-width: 140px; max-width: 720px; height: 24px; border-radius: 7px; background: rgba(255,255,255,0.04); border: 1px solid var(--line); cursor: pointer; touch-action: none; outline: none; --p: 0%; }
+.bottom .seek:focus-visible:not(.pressed) { border-color: var(--acc); }
+/* a tick for every screenful of scroll, so a scene-by-scene page shows its scenes */
+.bottom .seek::before { content: ''; position: absolute; inset: 0; border-radius: inherit; background-image: repeating-linear-gradient(90deg, rgba(255,255,255,0.13) 0 1px, transparent 1px var(--tick, 12px)); opacity: 0.7; }
+.bottom .seek.flat::before { display: none; }
+.bottom .seek::after { content: attr(data-note); position: absolute; inset: 0; display: grid; place-items: center; color: var(--faint); font-size: 10.5px; pointer-events: none; }
+.bottom .seek .fill { position: absolute; left: 0; top: 0; bottom: 0; width: var(--p); border-radius: 6px 0 0 6px; background: rgba(255,92,138,0.1); pointer-events: none; }
+.bottom .seek .needle { position: absolute; top: -3px; bottom: -3px; left: var(--p); width: 2px; margin-left: -1px; background: #ff5c8a; border-radius: 1px; pointer-events: none; }
+/* the grip says the line itself is the thing to take hold of */
+.bottom .seek .needle::before { content: ''; position: absolute; left: 50%; top: -2px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; background: #ff5c8a; box-shadow: 0 0 0 2px var(--panel); }
+.bottom .seek .ghost { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,92,138,0.55); display: none; pointer-events: none; }
+.bottom .seek:hover .ghost { display: block; }
+.bottom .seek.dragging .ghost, .bottom .seek.off .ghost, .bottom .seek.off .needle, .bottom .seek.off .fill { display: none; }
+.bottom .seek.dragging { cursor: grabbing; }
+.bottom .seek.off { cursor: default; }
+/* the preview: a second copy of the page, scrolled to wherever the needle is while it is held */
+.peek { position: fixed; bottom: 48px; z-index: 30; padding: 6px; background: rgba(23,23,28,0.98); border: 1px solid rgba(255,255,255,0.09); border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,0.5); pointer-events: none; opacity: 0; visibility: hidden; transform: translateY(6px); transition: opacity 0.12s, transform 0.12s, visibility 0s 0.12s; }
+.peek.on { opacity: 1; visibility: visible; transform: none; transition: opacity 0.12s, transform 0.12s; }
+.peek .view { position: relative; overflow: hidden; border-radius: 7px; background: #fff; }
+.peek iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; background: #fff; }
+.peek .wait { position: absolute; inset: 0; display: grid; place-items: center; background: var(--panel-2); color: var(--mut); font-size: 11.5px; }
+.peek.ready .wait { display: none; }
+.peek .cap { padding: 6px 2px 0; text-align: center; color: var(--mut); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.peek .cap b { color: var(--ink); font-weight: 650; }
 .bottom .sel { overflow: hidden; text-overflow: ellipsis; color: var(--ink); min-width: 0; flex: 1 1 auto; padding-left: 10px; }
 .bottom .sel a { color: #8db4ff; cursor: pointer; }
 .bottom .sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; flex: none; }
@@ -264,15 +289,28 @@ const rightGrip = h('div', { class: 'grip', 'data-side': 'right', style: { posit
 const playBtn = btn('pause', 'Freeze or play everything that moves', () => ctl?.setFrozen(!ctl.speedState().frozen))
 const backBtn = btn('back', 'One frame back (,)', () => ctl?.seekBy(-1000 / 60))
 const fwdBtn = btn('fwd', 'One frame on (.)', () => ctl?.seekBy(1000 / 60))
-const timeEl = h('span', { class: 'time' })
-const jog = h('div', { class: 'jog', title: 'Drag to move the clock of the page (Shift: faster)' }, h('div', { class: 'needle' }))
+const timeEl = h('span', { class: 'time', title: "The page's clock. Drag it sideways to run the clock with the pointer (Shift: faster)" })
 const speedSeg = h('div', { class: 'seg' }, ...[0.1, 0.25, 0.5, 1].map((v) => h('button', { text: `${v}x`, 'data-speed': v, title: v === 1 ? 'Normal speed' : `Slow motion: ${v} of normal speed`, onclick: () => ctl?.setSpeed(v) })))
+const seekFill = h('div', { class: 'fill' })
+const seekGhost = h('div', { class: 'ghost' })
+const seek = h(
+  'div',
+  { class: 'seek', role: 'slider', tabindex: '0', 'aria-label': 'Where the page is scrolled to', 'aria-valuemin': '0', 'aria-valuemax': '100', title: 'Drag the line to any point of the page: a preview shows it there, and letting go takes the page to it' },
+  seekFill,
+  seekGhost,
+  h('div', { class: 'needle' }),
+)
 const selInfo = h('div', { class: 'sel' })
-const bottom = h('footer', { class: 'bottom' }, playBtn, backBtn, fwdBtn, timeEl, jog, speedSeg, h('span', { class: 'sep' }), selInfo)
+const bottom = h('footer', { class: 'bottom' }, playBtn, backBtn, fwdBtn, timeEl, speedSeg, h('span', { class: 'sep' }), seek, h('span', { class: 'sep' }), selInfo)
+// the preview window over the bar (see "the timeline" below)
+const peekWait = h('div', { class: 'wait', text: 'Loading the preview' })
+const peekView = h('div', { class: 'view' }, peekWait)
+const peekCap = h('div', { class: 'cap' })
+const peek = h('div', { class: 'peek', 'aria-hidden': 'true' }, peekView, peekCap)
 
 const menuEl = h('div', { class: 'menu' })
 const studio = h('div', { class: 'studio' }, top, left, stage, right, bottom)
-document.body.append(studio, menuEl, rightGrip, shield)
+document.body.append(studio, menuEl, rightGrip, shield, peek)
 
 const layers = createLayers(layersHost, { ctl: () => ctl, doc: () => pageWin?.document ?? null })
 const finder = createFinder(document.body, () => ctl)
@@ -286,6 +324,8 @@ window.__RETOUCH_SHELL__ = {
     ctl = c
     pageWin = win
     c.events.addEventListener('change', () => schedule())
+    // the timeline's needle follows the page's scroll, whichever element of it scrolls
+    win.addEventListener('scroll', queueSeek, { capture: true, passive: true })
     inspector = createInspector(right, c)
     layers.attach()
     lastSel = undefined
@@ -372,6 +412,7 @@ function render() {
   timeEl.textContent = `${(t / 1000).toFixed(2)} s`
   if (lastTime != null && Math.abs(t - lastTime) > 1) layers.forgetDrawings()
   lastTime = t
+  syncSeek()
   // the panels follow the selection
   const sel = ctl.selected()
   const version = ctl.version?.() ?? 0
@@ -473,27 +514,232 @@ frame.addEventListener('load', () => {
   }, 1500)
 })
 
-/* ---------------- the timeline's jog ---------------- */
+/* ---------------- the timeline ---------------- */
 
-jog.addEventListener('pointerdown', (e) => {
-  if (!ctl) return
-  jog.setPointerCapture(e.pointerId)
+/**
+ * THE CLOCK'S JOG IS THE TIME ITSELF: drag the readout sideways and the
+ * page's clock runs with the pointer, 10 ms of the page's time a pixel
+ * (Shift: a tenth of a second), forwards or back.
+ */
+timeEl.addEventListener('pointerdown', (e) => {
+  if (!ctl || e.button !== 0) return
+  e.preventDefault()
+  timeEl.setPointerCapture(e.pointerId)
+  timeEl.classList.add('on')
   let last = e.clientX
-  let offset = 0
   const move = (ev) => {
     const dx = ev.clientX - last
     last = ev.clientX
-    offset += dx
-    jog.style.setProperty('--jx', `${offset}px`)
-    // 10 ms of the page's time per pixel; Shift for a tenth of a second
     if (dx) ctl.seekBy(dx * (ev.shiftKey ? 100 : 10))
   }
   const up = () => {
-    jog.removeEventListener('pointermove', move)
-    jog.removeEventListener('pointerup', up)
+    timeEl.classList.remove('on')
+    timeEl.removeEventListener('pointermove', move)
+    timeEl.removeEventListener('pointerup', up)
+    timeEl.removeEventListener('pointercancel', up)
   }
-  jog.addEventListener('pointermove', move)
-  jog.addEventListener('pointerup', up)
+  timeEl.addEventListener('pointermove', move)
+  timeEl.addEventListener('pointerup', up)
+  timeEl.addEventListener('pointercancel', up)
+})
+
+/**
+ * THE BAR IS THE PAGE'S SCROLL. A scroll-driven page keeps its animations
+ * in its scroll, each scene a stretch of it, so a clock moved on its own
+ * never reached them: at rest between scenes there is almost nothing on
+ * the clock to see. The needle is where the page is scrolled to, and
+ * follows the page as it moves. Press anywhere on the bar and the needle
+ * goes there; drag and it follows. While it is held, a PREVIEW over the
+ * bar shows the page at that point and the page itself does not move;
+ * letting go takes the page there, and Esc puts the needle back instead.
+ * The arrow keys move the page a screenful at a time.
+ *
+ * The preview is a second copy of the page, framed with the name
+ * `retouch-preview`: no editor boots in it (index.js) and it ignores the
+ * clock state stored for the real page (plugin.mjs). It lays out at
+ * exactly the real page's size, so a fraction of its scroll is the same
+ * point of the page as the same fraction of the real one, and is drawn
+ * scaled down. It loads the first time the bar is pointed at, then stays,
+ * frozen between drags so it costs nothing while nobody is looking at it.
+ */
+const PEEK_W = 360 // the widest a landscape preview is drawn
+const PEEK_H = 360 // the tallest a portrait one is
+let seekDrag = null // { id, p } while the needle is held
+let seekQueued = false
+let peekFrame = null
+let peekSrc = ''
+let peekReady = false
+
+const fracAt = (clientX) => {
+  const r = seek.getBoundingClientRect()
+  return Math.min(1, Math.max(0, (clientX - r.left) / Math.max(1, r.width)))
+}
+const pageScroll = () => {
+  try {
+    return ctl?.scroll?.() ?? null
+  } catch {
+    return null
+  }
+}
+const pct = (p) => `${Math.round(p * 100)}%`
+
+function setNeedle(p) {
+  seek.style.setProperty('--p', `${p * 100}%`)
+  seek.setAttribute('aria-valuenow', String(Math.round(p * 100)))
+  seek.setAttribute('aria-valuetext', `${pct(p)} of the way down the page`)
+}
+/** The bar follows the page: the needle where it is scrolled to, and a tick for each screenful. */
+function syncSeek() {
+  const s = pageScroll()
+  seek.classList.toggle('off', !s)
+  seek.dataset.note = s ? '' : 'this page does not scroll'
+  if (!s) {
+    seek.removeAttribute('aria-valuenow')
+    return
+  }
+  if (!seekDrag) setNeedle(s.p)
+  const tick = s.screen * seek.clientWidth
+  seek.classList.toggle('flat', tick < 5)
+  seek.style.setProperty('--tick', `${tick}px`)
+}
+function queueSeek() {
+  if (seekQueued) return
+  seekQueued = true
+  requestAnimationFrame(() => {
+    seekQueued = false
+    syncSeek()
+  })
+}
+new ResizeObserver(queueSeek).observe(seek)
+
+function pageAddress() {
+  try {
+    return pageWin.location.pathname + pageWin.location.search + pageWin.location.hash
+  } catch {
+    return frame.getAttribute('src') || '/'
+  }
+}
+/** Hold the preview still (between drags) or let it draw (while the needle is held). */
+function holdPeek(still) {
+  try {
+    peekFrame?.contentWindow?.__RETOUCH__?.freeze?.(still)
+  } catch {}
+}
+/** The preview copy, loaded at the page's address the first time it is needed and again whenever the page has moved on. */
+function ensurePeek() {
+  if (!pageWin) return
+  if (!peekFrame) {
+    // the name is set before the address, so the copy has it from its very first script
+    peekFrame = h('iframe', { name: 'retouch-preview', title: 'The page at the point on the timeline', tabindex: '-1', 'aria-hidden': 'true' })
+    peekFrame.addEventListener('load', () => {
+      peekReady = false
+      peek.classList.remove('ready')
+      // a moment for the page to lay itself out and draw before it is shown or held still
+      setTimeout(() => {
+        peekReady = true
+        peek.classList.add('ready')
+        if (seekDrag) peekAt(seekDrag.p)
+        else holdPeek(true)
+      }, 400)
+    })
+    peekView.append(peekFrame)
+  }
+  const src = pageAddress()
+  if (src !== peekSrc) {
+    peekSrc = src
+    peekReady = false
+    peek.classList.remove('ready')
+    peekFrame.src = src
+  }
+  sizePeek()
+}
+/** Laid out at the real page's size, drawn small. */
+function sizePeek() {
+  if (!peekFrame || !pageWin) return
+  const w = pageWin.innerWidth
+  const ht = pageWin.innerHeight
+  if (!w || !ht) return
+  const k = Math.min(Math.min(PEEK_W, innerWidth * 0.4) / w, Math.min(PEEK_H, innerHeight * 0.5) / ht)
+  peekFrame.style.width = `${w}px`
+  peekFrame.style.height = `${ht}px`
+  peekFrame.style.transform = `scale(${k})`
+  peekView.style.width = `${Math.round(w * k)}px`
+  peekView.style.height = `${Math.round(ht * k)}px`
+}
+/** Show the page at `p` in the preview, with the preview over that point of the bar. */
+function peekAt(p) {
+  const r = seek.getBoundingClientRect()
+  const x = r.left + p * r.width
+  const pw = peek.offsetWidth
+  peek.style.left = `${Math.round(Math.min(innerWidth - pw - 8, Math.max(8, x - pw / 2)))}px`
+  const s = pageScroll()
+  const screens = s ? Math.max(1, Math.round(1 / s.screen + 1)) : 0
+  const at = s ? Math.min(screens, Math.floor(p / s.screen + 1e-6) + 1) : 0
+  peekCap.replaceChildren(h('b', { text: pct(p) }), s && screens > 1 ? ` \u00b7 screen ${at} of ${screens}` : '')
+  if (!peekReady) return
+  let win
+  try {
+    win = peekFrame.contentWindow
+  } catch {
+    return
+  }
+  scrollToFraction(win, p)
+}
+function startSeek(e) {
+  if (!ctl || e.button !== 0 || !pageScroll()) return
+  e.preventDefault()
+  // Esc reaches the studio, not the page, while the needle is held; a ring is for the keyboard, not a press
+  seek.classList.add('pressed')
+  seek.focus({ preventScroll: true })
+  seek.setPointerCapture(e.pointerId)
+  seekDrag = { id: e.pointerId, p: fracAt(e.clientX) }
+  seek.classList.add('dragging')
+  setNeedle(seekDrag.p)
+  ensurePeek()
+  holdPeek(false)
+  peek.classList.add('on')
+  peekAt(seekDrag.p)
+}
+/** Let go: the page goes where the needle is (or, cancelled, the needle goes back to where the page is). */
+function endSeek(commit) {
+  const d = seekDrag
+  if (!d) return
+  seekDrag = null
+  seek.classList.remove('dragging')
+  peek.classList.remove('on')
+  holdPeek(true)
+  if (commit) ctl?.scrollTo?.(d.p)
+  syncSeek()
+}
+seek.addEventListener('pointerdown', startSeek)
+seek.addEventListener('pointermove', (e) => {
+  if (seekDrag && e.pointerId === seekDrag.id) {
+    seekDrag.p = fracAt(e.clientX)
+    setNeedle(seekDrag.p)
+    peekAt(seekDrag.p)
+  } else seekGhost.style.left = `${fracAt(e.clientX) * 100}%`
+})
+// pointing at the bar starts the preview loading, so it is ready by the time the needle is taken
+seek.addEventListener('pointerenter', () => ctl && pageScroll() && ensurePeek())
+seek.addEventListener('pointerup', (e) => e.pointerId === seekDrag?.id && endSeek(true))
+seek.addEventListener('pointercancel', () => endSeek(false))
+seek.addEventListener('lostpointercapture', () => endSeek(false))
+seek.addEventListener('blur', () => seek.classList.remove('pressed'))
+seek.addEventListener('keydown', (e) => {
+  if (!seekDrag) seek.classList.remove('pressed')
+  if (e.key === 'Escape' && seekDrag) {
+    e.preventDefault()
+    e.stopPropagation()
+    return endSeek(false)
+  }
+  const s = pageScroll()
+  if (!s || seekDrag) return
+  const to = e.key === 'ArrowRight' || e.key === 'PageDown' ? s.p + s.screen : e.key === 'ArrowLeft' || e.key === 'PageUp' ? s.p - s.screen : e.key === 'Home' ? 0 : e.key === 'End' ? 1 : null
+  if (to == null) return
+  e.preventDefault()
+  e.stopPropagation()
+  ctl.scrollTo(Math.min(1, Math.max(0, to)))
+  syncSeek()
 })
 
 /* ---------------- devices and zoom ---------------- */
@@ -807,7 +1053,8 @@ function menu(which) {
       <tr><td><kbd>I</kbd></td><td>Pick a colour, then fine-tune it where it is written</td></tr>
       <tr><td>Settings</td><td>Props, defaults, named values and timing in code; saved at once</td></tr>
       <tr><td>Motion</td><td>Keyframes on a timeline; click a diamond to edit that moment</td></tr>
-      <tr><td><kbd>,</kbd> <kbd>.</kbd></td><td>The page's clock a frame back or on; the timeline below scrubs it</td></tr>
+      <tr><td><kbd>,</kbd> <kbd>.</kbd></td><td>The page's clock a frame back or on; drag the time below sideways to run it</td></tr>
+      <tr><td>The bar below</td><td>The page's scroll, top to bottom. Drag the red line anywhere: a preview shows the page there, letting go takes the page to it, <kbd>Esc</kbd> cancels</td></tr>
       <tr><td><kbd>Ctrl</kbd> <kbd>Z</kbd></td><td>Undo, saves included</td></tr>
       <tr><td><kbd>Ctrl</kbd> <kbd>S</kbd></td><td>Save to source</td></tr>
       <tr><td>Full page</td><td>The page at full size with the editor over it; its studio button comes back</td></tr>

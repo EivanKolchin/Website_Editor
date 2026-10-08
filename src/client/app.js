@@ -7,6 +7,7 @@ import { createInspector, INSPECTOR_CSS } from './inspector.js'
 import { colorDistance, parseColor, rgbToHex } from './palette.js'
 import { createCanvasRecorder, findAgain, itemName, itemsAt, pageRect, scaleFor, siteOf } from './canvas.js'
 import { createPicker, pixelOf } from './pick.js'
+import { scrollState, scrollToFraction } from './scroll.js'
 import { baseOf, countStamps, fiberOf, isSvgChild, peersOf, unitChain, unitFor } from './react.js'
 import { alignmentGuides, collectGroupTargets, collectTargets, createGuideLayer, dropMoving, rectOf, snapAngle, snapMove, snapScale, unionBox } from './snap.js'
 import { applyText, blockFor, startEditing, textNodes } from './text.js'
@@ -5203,6 +5204,18 @@ export function createApp(boot, hot) {
     time: () => boot.time?.() ?? 0,
     seekBy: (ms) => {
       boot.step?.(ms)
+      drawings.time = null
+      renderBar()
+    },
+    // the page's scroll, for the timeline's bar (scroll.js): where it is, as a fraction of its range
+    scroll: () => {
+      const s = scrollState(window)
+      return s && { p: s.p, range: s.range, screen: s.screen }
+    },
+    // and a move there, let go of on the bar: a frozen page draws nothing by itself, so it is shown the new place
+    scrollTo: (p) => {
+      if (!scrollToFraction(window, p)) return
+      if (boot.isFrozen?.()) boot.step?.(0)
       drawings.time = null
       renderBar()
     },
