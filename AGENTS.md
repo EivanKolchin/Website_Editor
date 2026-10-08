@@ -125,7 +125,11 @@ read **Changing Retouch** first; it has rules that are easy to break.
     never shifts anything. Shift+click adds or removes; Ctrl+A takes the
     selection's siblings. WORDS FIRST: `textAt` finds text by where it is
     laid out, not by the hit test, because pages put `pointer-events: none`
-    on their headlines so drags reach the stage beneath; `textBlockOf`
+    on their headlines so drags reach the stage beneath, and only words that
+    can be SEEN: below `FAINT` (0.08) of opacity, its own times every
+    ancestor's, words are never what a tap means, because pages keep what
+    they are not showing painted at nearly nothing, often in the same place
+    as what they are (`seenOpacity`); `textBlockOf`
     then climbs from a word or line span to the heading, paragraph or key it
     belongs to. A second tap on selected words starts typing there, and
     `startEditing` opens up `pointer-events` and `user-select` on the
@@ -536,6 +540,10 @@ Rules, each learned the hard way:
 19. **Find text by its layout, not by the hit test.** Never go back to
     `elementFromPoint` or the caret lookup alone for "what words are here":
     both skip `pointer-events: none`, which is how pages lay out headlines.
+    And never drop the faintness test: `checkVisibility` only catches an
+    opacity of exactly 0, and a landing page that keeps its next scene at
+    0.003 over the current one had a tap on visible words open invisible
+    ones for typing.
 20. **Nothing new appears without being written.** New text and pastes are
     saved at once and shown by hot reload; there is no preview of an element
     that does not exist in the source yet.
