@@ -115,7 +115,8 @@ result straight away.
 a quarter or a tenth) and steps the page a frame forward or back, and scrubs
 it by dragging. The red playhead moves across the whole track: a window above
 it previews the proposed state, and releasing applies it to the main view.
-Esc cancels. Scroll over the track or use its arrow keys, Home and End to seek.
+Esc cancels. Drag the clock readout sideways to step time (Shift moves faster).
+Scroll over the track or use its arrow keys, Home and End to seek.
 **Page** covers the full scroll range of the selected scene (including scripted
 scrollers); **Time** covers clock-driven animation. Switch with the button
 beside the track. In Edit mode, scrolling over a selected or frozen scene still
@@ -250,7 +251,8 @@ Four habits cover almost everything:
 | a style on this element or its rule | Properties: type a value; "rule" switches to editing the rule |
 | a colour | the drop under the selection, or `I` to pick one off the page and edit it where it is written |
 | a value in code | Settings: type, choose, switch, or drag a number's label |
-| an animation | the timeline to play, freeze, slow or step (`,` and `.`); Motion to edit keyframes |
+| an animation | the timeline to play, freeze, slow or step (`,` and `.`), or drag its time; Motion to edit keyframes |
+| a point further down a scroll-driven page | drag the red line on the timeline's bar: previewed while held, gone to on release |
 | find something | `Ctrl`+`K` or `/` |
 | see where it is written | Source: every line opens in your editor |
 | delete | `Delete` |

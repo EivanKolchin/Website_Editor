@@ -273,6 +273,9 @@ function freezeSnippet(boot) {
     gp[n] = function () { const g = f.apply(this, arguments); try { g.__rtGeom = { kind: n.slice(6, -8).toLowerCase(), args: Array.prototype.slice.call(arguments) }; } catch (e) {} return g; };
   }
   try {
+    /* the studio's timeline preview is driven by the studio alone: it shares this tab's sessionStorage with the
+       real page, and must not take that page's frozen clock or slow motion for its own */
+    if (window.name === 'retouch-preview') return;
     /* frozen before a reload: frozen again once the page has drawn itself, not before its first frame, or a page
        painted on a canvas would come back blank */
     if (sessionStorage.getItem('retouch:frozen') === '1') {

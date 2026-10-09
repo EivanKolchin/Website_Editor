@@ -14,7 +14,8 @@ import { THEME_CSS } from './theme.js'
  *           drawings) and Changes (what is not saved yet)
  *   right   Properties: Design, Settings, Motion, Source
  *   below   the timeline: the page's clock, played, frozen, stepped and
- *           scrubbed a frame at a time
+ *           run by dragging its time; a Page/Time bar previews the selected
+ *           scene's scroll or clock while its needle is held
  *
  * The editor itself still runs INSIDE the page (src/client/app.js) - the
  * selection box, the handles, the guides, the depth rail and the text
@@ -159,7 +160,9 @@ select option { background: var(--panel-2); }
 
 /* the timeline */
 .bottom { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px; padding: 0 10px; background: var(--panel); border-top: 1px solid var(--line); color: var(--mut); font-size: 12px; white-space: nowrap; min-width: 0; }
-.bottom .time { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 70px; text-align: right; padding-right: 4px; }
+/* the time is the clock's jog: drag it sideways and the clock runs with the pointer */
+.bottom .time { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 70px; text-align: right; padding: 4px 6px 4px 4px; border-radius: 6px; cursor: ew-resize; touch-action: none; user-select: none; }
+.bottom .time:hover, .bottom .time.on { background: rgba(255,255,255,0.06); }
 .bottom .sel { overflow: hidden; text-overflow: ellipsis; color: var(--ink); min-width: 0; flex: 1 1 auto; padding-left: 10px; }
 .bottom .sel a { color: var(--acc-ink); cursor: pointer; }
 .bottom .sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; flex: none; }
@@ -264,7 +267,7 @@ const rightGrip = h('div', { class: 'grip', 'data-side': 'right', style: { posit
 const playBtn = btn('pause', 'Freeze or play everything that moves', () => ctl?.setFrozen(!ctl.speedState().frozen))
 const backBtn = btn('back', 'One frame back (,)', () => ctl?.seekBy(-1000 / 60))
 const fwdBtn = btn('fwd', 'One frame on (.)', () => ctl?.seekBy(1000 / 60))
-const timeEl = h('span', { class: 'time' })
+const timeEl = h('span', { class: 'time', title: "The page's clock. Drag it sideways to run the clock with the pointer (Shift: faster)" })
 const timelineMode = h('button', { class: 'timeline-mode', text: 'Time', 'aria-label': 'Timeline mode' })
 const jog = h('div', { class: 'jog', role: 'slider', tabindex: '0', 'aria-label': 'Animation timeline', 'aria-valuemin': '0' })
 const speedSeg = h('div', { class: 'seg' }, ...[0.1, 0.25, 0.5, 1].map((v) => h('button', { text: `${v}x`, 'data-speed': v, title: v === 1 ? 'Normal speed' : `Slow motion: ${v} of normal speed`, onclick: () => ctl?.setSpeed(v) })))
@@ -480,6 +483,37 @@ frame.addEventListener('load', () => {
     }
     syncPath()
   }, 1500)
+})
+
+/* ---------------- the timeline ---------------- */
+
+/**
+ * THE CLOCK'S JOG IS THE TIME ITSELF: drag the readout sideways and the
+ * page's clock runs with the pointer, 10 ms of the page's time a pixel
+ * (Shift: a tenth of a second), forwards or back.
+ */
+timeEl.addEventListener('pointerdown', (e) => {
+  if (!ctl || e.button !== 0 || ctl.timeline?.().scrubbing) return
+  e.preventDefault()
+  timeEl.setPointerCapture(e.pointerId)
+  timeEl.classList.add('on')
+  let last = e.clientX
+  const move = (ev) => {
+    const dx = ev.clientX - last
+    last = ev.clientX
+    if (dx) ctl.seekBy(dx * (ev.shiftKey ? 100 : 10))
+  }
+  const up = () => {
+    timeEl.classList.remove('on')
+    timeEl.removeEventListener('pointermove', move)
+    timeEl.removeEventListener('pointerup', up)
+    timeEl.removeEventListener('pointercancel', up)
+    timeEl.removeEventListener('lostpointercapture', up)
+  }
+  timeEl.addEventListener('pointermove', move)
+  timeEl.addEventListener('pointerup', up)
+  timeEl.addEventListener('pointercancel', up)
+  timeEl.addEventListener('lostpointercapture', up)
 })
 
 /* ---------------- devices and zoom ---------------- */
@@ -793,7 +827,8 @@ function menu(which) {
       <tr><td><kbd>I</kbd></td><td>Pick a colour, then fine-tune it where it is written</td></tr>
       <tr><td>Settings</td><td>Props, defaults, named values and timing in code; saved at once</td></tr>
       <tr><td>Motion</td><td>Keyframes on a timeline; click a diamond to edit that moment</td></tr>
-      <tr><td><kbd>,</kbd> <kbd>.</kbd></td><td>The page's clock a frame back or on; the timeline below scrubs it</td></tr>
+      <tr><td><kbd>,</kbd> <kbd>.</kbd></td><td>The page's clock a frame back or on; drag the time below sideways to run it</td></tr>
+      <tr><td>The bar below</td><td>Switch Page/Time to seek the selected scene's scroll or clock. Drag the red line to preview; release to apply, <kbd>Esc</kbd> to cancel</td></tr>
       <tr><td><kbd>Ctrl</kbd> <kbd>Z</kbd></td><td>Undo, saves included</td></tr>
       <tr><td><kbd>Ctrl</kbd> <kbd>S</kbd></td><td>Save to source</td></tr>
       <tr><td>Full page</td><td>The page at full size with the editor over it; its studio button comes back</td></tr>

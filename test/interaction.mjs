@@ -120,6 +120,14 @@ export async function interactionTests(test, eq, ok) {
     eq(value, 270)
     win.__RETOUCH__.freeze(true)
   })
+  await test('a live timeline preview ignores the real page stored clock and remains usable', () => {
+    const script = retouchPlugin({ config: normalise({}, tmpdir()) }).transformIndexHtml().find((tag) => tag.tag === 'script' && tag.children).children
+    const win = { name: 'retouch-preview', requestAnimationFrame: () => 1, cancelAnimationFrame() {} }
+    runInNewContext(script, { window: win, document: { getAnimations: () => [], documentElement: { toggleAttribute() {} }, readyState: 'complete' }, performance: { now: () => 100 }, sessionStorage: { getItem: () => { throw new Error('preview read the main page clock') } }, parent: { location: { search: '' } }, URLSearchParams, setTimeout, setInterval, clearInterval, console })
+    eq(win.__RETOUCH__.isFrozen(), false)
+    win.__RETOUCH__.step(250)
+    eq(win.__RETOUCH__.time(), 350, 'the studio can still drive the preview clock')
+  })
   await test('CSS scrubbing follows the virtual clock at slow speed and preserves animation start offsets through a rewind', () => {
     const script = retouchPlugin({ config: normalise({}, tmpdir()) }).transformIndexHtml().find((tag) => tag.tag === 'script' && tag.children).children
     const animation = { currentTime: 50, playbackRate: 1, playState: 'running', pause() { this.playState = 'paused' }, play() { this.playState = 'running' } }

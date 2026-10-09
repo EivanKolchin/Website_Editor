@@ -47,7 +47,7 @@ export function createTimelineView({ getCtl, getPage, frameBox, jog, timeEl, mod
     needle.style.left = `calc(${fraction * 100}% - ${fraction * 2}px)`
     elapsed.style.width = `${fraction * 100}%`
     endLabel.textContent = s.kind === 'scroll' ? '100%' : `${Math.round(s.end / 1000)} s`
-    timeEl.textContent = label(s)
+    timeEl.textContent = `${(c.time() / 1000).toFixed(2)} s`
     modeBtn.textContent = s.kind === 'scroll' ? 'Page' : 'Time'
     modeBtn.disabled = s.scrubbing || !s.hasScroll
     modeBtn.title = s.kind === 'scroll' ? 'Page animation: switch to the time clock' : 'Time animation: switch to page scrolling'
