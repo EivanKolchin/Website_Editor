@@ -968,6 +968,126 @@ await test('drawings on a canvas are hit where they are drawn, small ones genero
   eq(C.itemName(star), 'circle')
 })
 
+await test('multi-canvas constellation: lines and stars hit, skipped on clean capture without duplicates, and maintain distance ratios', () => {
+  const cvBack = { width: 800, height: 600, getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) }
+  const cvFront = { width: 800, height: 600, getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) }
+
+  // Star 1 and Star 2 on cvBack
+  const star1 = { canvas: cvBack, kind: 'fill', subs: [[100, 100]], bbox: { x: 98, y: 98, w: 4, h: 4 }, alpha: 1, lineWidth: 0, color: '#fff', arcs: [{ full: true }] }
+  const star2 = { canvas: cvBack, kind: 'fill', subs: [[300, 200]], bbox: { x: 298, y: 198, w: 4, h: 4 }, alpha: 1, lineWidth: 0, color: '#fff', arcs: [{ full: true }] }
+  // Constellation line on cvFront connecting star 1 and star 2
+  const line = { canvas: cvFront, kind: 'stroke', subs: [[100, 100, 300, 200]], bbox: { x: 100, y: 100, w: 200, h: 100 }, alpha: 1, lineWidth: 1.5, color: 'gradient', stops: [[0, '#ffffff'], [1, '#88ccff']] }
+
+  // Hit testing the line on cvFront:
+  // Midpoint of line is (200, 150). Clicking 6px away from line at (200, 156):
+  const lineHits = C.itemsAt([line], 200, 156)
+  eq(lineHits[0], line, 'line is hit comfortably with stroke tolerance')
+
+  // Distance ratio preservation across group transforms:
+  const c1 = { x: 100, y: 100 }, c2 = { x: 300, y: 200 }, cline = { x: 200, y: 150 }
+  const d0_12 = Math.hypot(c2.x - c1.x, c2.y - c1.y)
+  const d0_1line = Math.hypot(cline.x - c1.x, cline.y - c1.y)
+  const initialRatio = d0_12 / d0_1line
+
+  const gc = { x: (c1.x + c2.x + cline.x) / 3, y: (c1.y + c2.y + cline.y) / 3 }
+  const k = 1.75
+  const angle = 0.6
+  const cos = Math.cos(angle), sin = Math.sin(angle)
+  const transformPoint = (p) => {
+    const sx = gc.x + (p.x - gc.x) * k
+    const sy = gc.y + (p.y - gc.y) * k
+    const rx = gc.x + (sx - gc.x) * cos - (sy - gc.y) * sin
+    const ry = gc.y + (sx - gc.x) * sin + (sy - gc.y) * cos
+    return { x: rx + 50, y: ry - 30 }
+  }
+  const c1_new = transformPoint(c1)
+  const c2_new = transformPoint(c2)
+  const cline_new = transformPoint(cline)
+
+  const dNew_12 = Math.hypot(c2_new.x - c1_new.x, c2_new.y - c1_new.y)
+  const dNew_1line = Math.hypot(cline_new.x - c1_new.x, cline_new.y - c1_new.y)
+  const newRatio = dNew_12 / dNew_1line
+  ok(Math.abs(initialRatio - newRatio) < 1e-9, 'distance ratios between all members are strictly preserved')
+
+  // Testing captureCleanCanvases:
+  let drawnCalls = []
+  const boot = {
+    isFrozen: () => true,
+    step: () => {
+      const ctxBack = {
+        canvas: cvBack,
+        getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+      }
+      boot.rec(ctxBack, 'beginPath', [])
+      boot.rec(ctxBack, 'arc', [100, 100, 2, 0, Math.PI * 2])
+      const skipStar1 = boot.rec(ctxBack, 'fill', [])
+      if (!skipStar1?.skip) drawnCalls.push('star1')
+
+      boot.rec(ctxBack, 'beginPath', [])
+      boot.rec(ctxBack, 'arc', [300, 200, 2, 0, Math.PI * 2])
+      const skipStar2 = boot.rec(ctxBack, 'fill', [])
+      if (!skipStar2?.skip) drawnCalls.push('star2')
+
+      const ctxFront = {
+        canvas: cvFront,
+        getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+      }
+      boot.rec(ctxFront, 'beginPath', [])
+      boot.rec(ctxFront, 'moveTo', [100, 100])
+      boot.rec(ctxFront, 'lineTo', [300, 200])
+      const skipLine = boot.rec(ctxFront, 'stroke', [])
+      if (!skipLine?.skip) drawnCalls.push('line')
+    },
+  }
+
+  const rec = C.createCanvasRecorder(boot, (cb) => cb())
+  rec.captureCleanCanvases([star1, line])
+  eq(drawnCalls.join(), 'star2', 'star1 and line were cleanly skipped; star2 remained without duplication')
+})
+
+await test('canvas drawings persist on pointerup, clean background is preserved without snapback, and transformed items survive step(0)', () => {
+  const cv = {
+    width: 800,
+    height: 600,
+    getContext: () => ({
+      save: () => {},
+      restore: () => {},
+      setTransform: () => {},
+      clearRect: () => {},
+      drawImage: () => {},
+      beginPath: () => {},
+      arc: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      stroke: () => {},
+      fill: () => {},
+    }),
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+  }
+
+  const star = { canvas: cv, kind: 'fill', subs: [[100, 100]], bbox: { x: 98, y: 98, w: 4, h: 4 }, alpha: 1, lineWidth: 0, color: '#fff', arcs: [{ full: true }] }
+  const line = { canvas: cv, kind: 'stroke', subs: [[100, 100, 200, 200]], bbox: { x: 100, y: 100, w: 100, h: 100 }, alpha: 1, lineWidth: 2, color: '#88ccff' }
+
+  // Initial positions
+  const b0Star = { ...star.bbox }
+  const s0Line = line.subs.map((s) => [...s])
+
+  // Verify initial hit test
+  eq(C.itemsAt([star], 100, 100)[0], star, 'star hit at original position')
+  eq(C.itemsAt([line], 150, 150)[0], line, 'line hit at original position')
+
+  // Move star and line by (+80, +50)
+  const dx = 80, dy = 50
+  star.bbox = { x: b0Star.x + dx, y: b0Star.y + dy, w: b0Star.w, h: b0Star.h }
+  line.subs = s0Line.map((s) => [s[0] + dx, s[1] + dy, s[2] + dx, s[3] + dy])
+  line.bbox = { x: line.bbox.x + dx, y: line.bbox.y + dy, w: line.bbox.w, h: line.bbox.h }
+
+  // Verify hit testing at moved positions
+  eq(C.itemsAt([star], 100, 100).length, 0, 'old position no longer hits star')
+  eq(C.itemsAt([star], 100 + dx, 100 + dy)[0], star, 'star hit at new moved position')
+  eq(C.itemsAt([line], 150 + dx, 150 + dy)[0], line, 'line hit at new moved position')
+})
+
 /* ------------------------------------------------------------------ */
 /*  the optional mapping command, without a model                      */
 /* ------------------------------------------------------------------ */
@@ -1099,6 +1219,13 @@ await test("the studio's tab wears the icon the project declares, under Vite's b
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+const { importTests } = await import('./import.mjs')
+await importTests(test, eq, ok)
+const { interactionTests } = await import('./interaction.mjs')
+await interactionTests(test, eq, ok)
+const { setupTests } = await import('./setup.mjs')
+await setupTests(test, eq, ok)
 
 console.log(results.join('\n'))
 console.log(`\n${passed} passed, ${failed} failed`)

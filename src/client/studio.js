@@ -2,6 +2,9 @@ import { createFinder, FINDER_CSS } from './finder.js'
 import { createInspector, INSPECTOR_CSS } from './inspector.js'
 import { createLayers, LAYERS_CSS } from './layers.js'
 import { h, icon, zoomKeyOf } from './ui.js'
+import { createProjectMenu } from './projects.js'
+import { createTimelineView, TIMELINE_CSS } from './timeline-view.js'
+import { THEME_CSS } from './theme.js'
 
 /**
  * THE STUDIO: the page in a frame, the editor's panels around it.
@@ -57,20 +60,20 @@ const CSS = `
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.26); background-clip: padding-box; }
 ::-webkit-scrollbar-button { display: none; }
-:root { --bg: #0c0c0f; --panel: #131317; --panel-2: #18181d; --line: rgba(255,255,255,0.07); --ink: #ededf2; --mut: #8e8e9a; --faint: #5c5c66; --acc: #4c8dff; --acc-2: #8b7bff; --acc-soft: rgba(76,141,255,0.16); }
+${THEME_CSS}
 body { font: 500 12.5px/1.35 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; min-width: 28px; padding: 0 8px; border-radius: 8px; white-space: nowrap; transition: background .12s, color .12s; }
 button:hover { background: rgba(255,255,255,0.07); }
-button.on { background: var(--acc-soft); color: #9ec0ff; }
-button.primary { background: var(--acc); color: #fff; font-weight: 650; padding: 0 14px; box-shadow: 0 1px 0 rgba(255,255,255,0.2) inset, 0 4px 14px rgba(76,141,255,0.25); }
-button.primary:hover { background: #6199ff; }
+button.on { background: var(--acc-soft); color: var(--acc-ink); }
+button.primary { background: var(--acc); color: var(--on-acc); font-weight: 650; padding: 0 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.12); }
+button.primary:hover { background: var(--acc-hover); }
 button:disabled { opacity: 0.32; pointer-events: none; box-shadow: none; }
-input, select { font: inherit; color: inherit; background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 8px; height: 28px; padding: 0 9px; outline: none; min-width: 0; }
-input:focus, select:focus { border-color: var(--acc); box-shadow: 0 0 0 3px rgba(76,141,255,0.15); }
-select option { background: #1c1c22; }
+input, select { font: inherit; color: inherit; background: var(--field); border: 1px solid var(--line); border-radius: 8px; height: 28px; padding: 0 9px; outline: none; min-width: 0; }
+input:focus, select:focus { border-color: var(--acc); box-shadow: 0 0 0 3px rgba(var(--acc-rgb),0.15); }
+select option { background: var(--panel-2); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
 .muted { color: var(--mut); }
-.studio { position: fixed; inset: 0; display: grid; grid-template-columns: var(--lw, 268px) 1fr var(--rw, 352px); grid-template-rows: 50px 1fr 40px; }
+.studio { position: fixed; inset: 0; display: grid; grid-template-columns: var(--lw, 268px) minmax(0, 1fr) var(--rw, 352px); grid-template-rows: 50px minmax(0, 1fr) 40px; }
 .studio.noleft { grid-template-columns: 0 1fr var(--rw, 352px); }
 .studio.noright { grid-template-columns: var(--lw, 268px) 1fr 0; }
 .studio.noleft.noright { grid-template-columns: 0 1fr 0; }
@@ -93,7 +96,7 @@ select option { background: #1c1c22; }
 .top .grp { display: flex; align-items: center; gap: 2px; flex: none; }
 .top .sep { width: 1px; height: 22px; background: var(--line); margin: 0 6px; flex: none; }
 .top .brand { display: flex; align-items: center; gap: 8px; font-weight: 750; letter-spacing: -0.01em; padding: 0 10px 0 4px; flex: none; font-size: 13px; }
-.top .brand i { width: 16px; height: 16px; border-radius: 5px; background: conic-gradient(from 210deg, var(--acc), var(--acc-2), #f472b6, var(--acc)); box-shadow: 0 0 0 1px rgba(255,255,255,0.12) inset; }
+.top .brand i { width: 16px; height: 16px; border-radius: 5px; background: var(--acc); box-shadow: 0 0 0 1px rgba(255,255,255,0.12) inset; }
 .seg { display: inline-flex; background: rgba(255,255,255,0.045); border: 1px solid var(--line); border-radius: 9px; padding: 2px; flex: none; }
 .seg button { height: 24px; font-size: 12px; padding: 0 9px; border-radius: 7px; color: var(--mut); }
 .seg button.on { background: rgba(255,255,255,0.11); color: var(--ink); box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset; }
@@ -107,14 +110,14 @@ select option { background: #1c1c22; }
 .top .find kbd { flex: none; }
 @container (max-width: 210px) { .top .find kbd { display: none; } }
 @container (max-width: 110px) { .top .find span + span { display: none; } }
-.top .find kbd, .bottom kbd, .menu kbd { font: 600 10.5px/1 inherit; font-family: inherit; padding: 3px 5px; border-radius: 5px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1); color: #a1a1aa; }
+.top .find kbd, .bottom kbd, .menu kbd { font: 600 10.5px/1 inherit; font-family: inherit; padding: 3px 5px; border-radius: 5px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1); color: var(--mut); }
 .top .pending { color: var(--mut); }
-.top .pending.has { color: #fcd34d; }
-.top .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: rgba(252,211,77,0.16); color: #fcd34d; font-size: 11px; font-weight: 700; }
-.check i { width: 8px; height: 8px; border-radius: 50%; background: #52525b; }
-.check.passed i { background: #3ccf8e; } .check.failed i { background: #ff6b6b; } .check.running i { background: #f5b84a; animation: pulse 1s infinite; }
+.top .pending.has { color: var(--warning); }
+.top .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: rgba(var(--warning-rgb),0.16); color: var(--warning); font-size: 11px; font-weight: 700; }
+.check i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); }
+.check.passed i { background: var(--success); } .check.failed i { background: var(--danger); } .check.running i { background: var(--warning); animation: pulse 1s infinite; }
 @keyframes pulse { 50% { opacity: .35; } }
-.check.failed { color: #ffb4b4; }
+.check.failed { color: var(--danger); }
 
 /* panels */
 .left, .right { background: var(--panel); min-height: 0; overflow: hidden; position: relative; }
@@ -123,11 +126,11 @@ select option { background: #1c1c22; }
 .ltabs { display: flex; gap: 2px; padding: 8px 8px 0; }
 .ltabs button { height: 28px; font-weight: 650; font-size: 12px; color: var(--mut); padding: 0 10px; }
 .ltabs button.on { background: rgba(255,255,255,0.08); color: var(--ink); }
-.ltabs .count { font-size: 10.5px; color: #fcd34d; }
+.ltabs .count { font-size: 10.5px; color: var(--warning); }
 .lbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .changes { padding: 10px; overflow: auto; }
 .changes .item { display: flex; width: 100%; height: auto; min-height: 34px; padding: 7px 9px; justify-content: flex-start; text-align: left; white-space: normal; border-radius: 8px; gap: 9px; }
-.changes .item i { width: 7px; height: 7px; border-radius: 50%; background: #fcd34d; flex: none; }
+.changes .item i { width: 7px; height: 7px; border-radius: 50%; background: var(--warning); flex: none; }
 .changes .empty { color: var(--mut); padding: 14px 6px; line-height: 1.6; }
 .changes .acts { display: flex; gap: 6px; margin-top: 10px; }
 .grip { position: absolute; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 3; }
@@ -135,7 +138,7 @@ select option { background: #1c1c22; }
 .left .grip { right: -4px; }
 
 /* the stage */
-.stage { position: relative; overflow: auto; background: #09090b; background-image: radial-gradient(rgba(255,255,255,0.045) 1px, transparent 1px); background-size: 18px 18px; display: block; min-width: 0; }
+.stage { position: relative; overflow: auto; background-color: var(--stage); background-image: radial-gradient(circle, var(--stage-dot) 1.2px, transparent 1.2px); background-size: 20px 20px; display: block; min-width: 0; min-height: 0; overscroll-behavior: contain; }
 .stage.fit { overflow: hidden; }
 .stage.panning, .shield.panning { cursor: grabbing; }
 .sizer { position: relative; }
@@ -149,7 +152,7 @@ select option { background: #1c1c22; }
 .menu .zrow { display: flex; width: 100%; justify-content: space-between; height: 30px; padding: 0 9px; border-radius: 8px; font-size: 12.5px; }
 .menu .zrow:hover { background: rgba(255,255,255,0.07); }
 .menu .zrow kbd { color: var(--mut); font-size: 11px; }
-.menu .zrow.on { color: #9ec0ff; }
+.menu .zrow.on { color: var(--acc-ink); }
 .menu .zhint { padding: 8px 9px 4px; color: var(--mut); font-size: 11.5px; line-height: 1.5; border-top: 1px solid var(--line); margin-top: 4px; }
 .frame iframe { border: 0; width: 100%; height: 100%; display: block; background: #fff; }
 .devlabel { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); color: var(--faint); font-size: 11px; pointer-events: none; }
@@ -157,24 +160,20 @@ select option { background: #1c1c22; }
 /* the timeline */
 .bottom { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px; padding: 0 10px; background: var(--panel); border-top: 1px solid var(--line); color: var(--mut); font-size: 12px; white-space: nowrap; min-width: 0; }
 .bottom .time { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 70px; text-align: right; padding-right: 4px; }
-.bottom .jog { position: relative; flex: 0 1 320px; min-width: 120px; height: 24px; border-radius: 7px; background: rgba(255,255,255,0.04); border: 1px solid var(--line); cursor: ew-resize; overflow: hidden; touch-action: none; }
-.bottom .jog::before { content: ''; position: absolute; inset: 0; background-image: repeating-linear-gradient(90deg, rgba(255,255,255,0.12) 0 1px, transparent 1px 12px); background-position: var(--jx, 0) 0; opacity: 0.6; }
-.bottom .jog::after { content: 'drag to move the clock'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--faint); font-size: 10.5px; }
-.bottom .jog .needle { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; background: #ff5c8a; }
 .bottom .sel { overflow: hidden; text-overflow: ellipsis; color: var(--ink); min-width: 0; flex: 1 1 auto; padding-left: 10px; }
-.bottom .sel a { color: #8db4ff; cursor: pointer; }
+.bottom .sel a { color: var(--acc-ink); cursor: pointer; }
 .bottom .sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; flex: none; }
 
 /* menus */
-.menu { position: fixed; top: 54px; width: 400px; max-width: calc(100vw - 20px); max-height: 64vh; overflow: auto; padding: 8px; display: none; z-index: 20; background: rgba(23,23,28,0.98); border: 1px solid rgba(255,255,255,0.09); border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,0.5); }
+.menu { position: fixed; top: 54px; width: 400px; max-width: calc(100vw - 20px); max-height: 64vh; overflow: auto; padding: 8px; display: none; z-index: 20; background: var(--panel-2); border: 1px solid rgba(255,255,255,0.09); border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,0.5); }
 .menu h6 { margin: 4px 8px 8px; font-size: 10.5px; font-weight: 700; color: var(--mut); text-transform: uppercase; letter-spacing: 0.06em; }
-.menu pre { margin: 0; padding: 8px; white-space: pre-wrap; word-break: break-word; font-size: 11px; color: #d4d4d8; }
+.menu pre { margin: 0; padding: 8px; white-space: pre-wrap; word-break: break-word; font-size: 11px; color: var(--ink); }
 .menu table { width: 100%; border-collapse: collapse; } .menu td { padding: 4px 6px; vertical-align: top; line-height: 1.45; } .menu td:first-child { color: var(--mut); width: 130px; }
 `
 
 /* ---------------- the document ---------------- */
 
-document.head.append(h('style', { text: CSS + INSPECTOR_CSS + LAYERS_CSS + FINDER_CSS }))
+document.head.append(h('style', { text: CSS + TIMELINE_CSS + INSPECTOR_CSS + LAYERS_CSS + FINDER_CSS }))
 if (!document.title) document.title = 'Retouch studio'
 
 /**
@@ -224,11 +223,12 @@ const zoomBtn = h('button', { class: 'zoomval', title: 'Zoom: fit, the selection
 const zoomSeg = h('div', { class: 'seg zoomer' }, zoomOut, zoomBtn, zoomIn)
 const devBtns = DEVICES.map((d) => h('button', { html: `${icon(d.icon, 13)}<span>${d.label}</span>`, title: d.title, onclick: () => setDevice(d.id) }))
 const deviceSeg = h('div', { class: 'seg' }, ...devBtns)
+const projectMenu = createProjectMenu({ getCtl: () => ctl, getPage: () => pageWin })
 
 const top = h(
   'header',
   { class: 'top' },
-  h('div', { class: 'brand', title: 'Retouch studio' }, h('i'), h('span', { text: 'Retouch' })),
+  projectMenu.button,
   h('div', { class: 'seg' }, editBtn, viewBtn),
   h('span', { class: 'sep' }),
   h('div', { class: 'grp' }, btn('back', 'Back', () => ctl?.goHistory(-1)), btn('fwd', 'Forward', () => ctl?.goHistory(1)), pathInput, pagesList, btn('reload', 'Reload, keeping the place', () => ctl?.reloadInPlace())),
@@ -265,14 +265,16 @@ const playBtn = btn('pause', 'Freeze or play everything that moves', () => ctl?.
 const backBtn = btn('back', 'One frame back (,)', () => ctl?.seekBy(-1000 / 60))
 const fwdBtn = btn('fwd', 'One frame on (.)', () => ctl?.seekBy(1000 / 60))
 const timeEl = h('span', { class: 'time' })
-const jog = h('div', { class: 'jog', title: 'Drag to move the clock of the page (Shift: faster)' }, h('div', { class: 'needle' }))
+const timelineMode = h('button', { class: 'timeline-mode', text: 'Time', 'aria-label': 'Timeline mode' })
+const jog = h('div', { class: 'jog', role: 'slider', tabindex: '0', 'aria-label': 'Animation timeline', 'aria-valuemin': '0' })
 const speedSeg = h('div', { class: 'seg' }, ...[0.1, 0.25, 0.5, 1].map((v) => h('button', { text: `${v}x`, 'data-speed': v, title: v === 1 ? 'Normal speed' : `Slow motion: ${v} of normal speed`, onclick: () => ctl?.setSpeed(v) })))
 const selInfo = h('div', { class: 'sel' })
-const bottom = h('footer', { class: 'bottom' }, playBtn, backBtn, fwdBtn, timeEl, jog, speedSeg, h('span', { class: 'sep' }), selInfo)
+const bottom = h('footer', { class: 'bottom' }, playBtn, backBtn, fwdBtn, timelineMode, timeEl, jog, speedSeg, h('span', { class: 'sep' }), selInfo)
 
 const menuEl = h('div', { class: 'menu' })
 const studio = h('div', { class: 'studio' }, top, left, stage, right, bottom)
 document.body.append(studio, menuEl, rightGrip, shield)
+const timelineView = createTimelineView({ getCtl: () => ctl, getPage: () => pageWin, frameBox, jog, timeEl, modeBtn: timelineMode })
 
 const layers = createLayers(layersHost, { ctl: () => ctl, doc: () => pageWin?.document ?? null })
 const finder = createFinder(document.body, () => ctl)
@@ -283,6 +285,7 @@ let inspector = null
 window.__RETOUCH_SHELL__ = {
   /** Called by the editor in the frame each time the page in it loads. */
   attach(c, win) {
+    timelineView.cancel()
     ctl = c
     pageWin = win
     c.events.addEventListener('change', () => schedule())
@@ -294,6 +297,7 @@ window.__RETOUCH_SHELL__ = {
     schedule()
   },
   openFinder: () => finder.open(),
+  openProject: () => projectMenu.importProject(),
   // the zoom, from inside the page: Ctrl+wheel and pinch there, in the page's own pixels
   zoomWheel: (deltaY, deltaMode, x, y) => {
     const p = fromPage(x, y)
@@ -307,6 +311,7 @@ window.__RETOUCH_SHELL__ = {
    * scrolls as it would. Alt+wheel always goes to the page.
    */
   panWheel: (dx, dy, mode) => {
+    if (stage.classList.contains('fit')) return false
     const unit = mode === 1 ? 16 : mode === 2 ? stage.clientHeight : 1
     const x0 = stage.scrollLeft
     const y0 = stage.scrollTop
@@ -369,7 +374,10 @@ function render() {
   playBtn.classList.toggle('on', sp.frozen)
   for (const b of speedSeg.children) b.classList.toggle('on', !sp.frozen && Number(b.dataset.speed) === sp.speed)
   const t = ctl.time()
-  timeEl.textContent = `${(t / 1000).toFixed(2)} s`
+  timelineView.render()
+  const scrubbing = ctl.timeline?.().scrubbing
+  playBtn.disabled = backBtn.disabled = fwdBtn.disabled = !!scrubbing
+  for (const b of speedSeg.children) b.disabled = !!scrubbing
   if (lastTime != null && Math.abs(t - lastTime) > 1) layers.forgetDrawings()
   lastTime = t
   // the panels follow the selection
@@ -461,6 +469,7 @@ pathInput.addEventListener('keydown', (e) => {
   } else if (e.key === 'Escape') pathInput.blur()
 })
 frame.addEventListener('load', () => {
+  timelineView.cancel()
   mirrorPage()
   // a page that is not served through Retouch has no editor in it: say so rather than show dead panels
   setTimeout(() => {
@@ -471,29 +480,6 @@ frame.addEventListener('load', () => {
     }
     syncPath()
   }, 1500)
-})
-
-/* ---------------- the timeline's jog ---------------- */
-
-jog.addEventListener('pointerdown', (e) => {
-  if (!ctl) return
-  jog.setPointerCapture(e.pointerId)
-  let last = e.clientX
-  let offset = 0
-  const move = (ev) => {
-    const dx = ev.clientX - last
-    last = ev.clientX
-    offset += dx
-    jog.style.setProperty('--jx', `${offset}px`)
-    // 10 ms of the page's time per pixel; Shift for a tenth of a second
-    if (dx) ctl.seekBy(dx * (ev.shiftKey ? 100 : 10))
-  }
-  const up = () => {
-    jog.removeEventListener('pointermove', move)
-    jog.removeEventListener('pointerup', up)
-  }
-  jog.addEventListener('pointermove', move)
-  jog.addEventListener('pointerup', up)
 })
 
 /* ---------------- devices and zoom ---------------- */
@@ -824,6 +810,8 @@ document.addEventListener('pointerdown', (e) => {
 /* ---------------- keys: the studio's own, and the editor's when focus is out here ---------------- */
 
 window.addEventListener('keydown', (e) => {
+  if (e.defaultPrevented || ctl?.timeline?.().scrubbing) return
+  if (projectMenu.isOpen()) return
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault()
     return finder.isOpen ? finder.close() : finder.open()

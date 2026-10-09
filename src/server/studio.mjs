@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { THEME } from '../client/theme.js'
 
 /**
  * THE STUDIO PAGE: a bare document the editor's panels are drawn into
@@ -12,7 +13,7 @@ import { join } from 'node:path'
  * the browser ask for /favicon.ico, and one that has cached another
  * project's icon for this same localhost address shows that instead.
  */
-export function studioPage({ name, entry, icons = [] }) {
+export function studioPage({ name, entry, icons = [], boot = null }) {
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
   const links = (icons.length ? icons : [{ rel: 'icon', href: 'data:,' }])
     .map((i) => `<link rel="${esc(i.rel)}" href="${esc(i.href)}"${i.type ? ` type="${esc(i.type)}"` : ''}${i.sizes ? ` sizes="${esc(i.sizes)}"` : ''} data-project-icon>`)
@@ -25,9 +26,10 @@ export function studioPage({ name, entry, icons = [] }) {
 <title>Retouch - ${esc(name)}</title>
 ${links}
 <meta name="color-scheme" content="dark">
-<style>html,body{margin:0;height:100%;background:#0e0e11;color:#f4f4f5;overflow:hidden}</style>
+<style>html,body{margin:0;height:100%;background:${THEME.bg};color:${THEME.ink};overflow:hidden}</style>
 </head>
 <body>
+${boot ? `<script>window.__RETOUCH_STUDIO__=${JSON.stringify(boot).replace(/</g, '\\u003c')}</script>` : ''}
 <script type="module" src="${esc(entry)}"></script>
 </body>
 </html>`

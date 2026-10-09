@@ -16,7 +16,23 @@
  * selection records once more with them.
  */
 
+import { apply, inv, mul } from './geometry.js'
+
 const STEPS = 12
+const matrixOf = (m) => [m.a, m.b, m.c, m.d, m.e, m.f]
+const frameKey = (f) => f ? `${f.url.split('?')[0]}:${f.line}:${f.col}` : null
+const functionsIn = (stack) => [...String(stack).matchAll(/\(?((?:https?):\/\/[^\s()]+?):(\d+):(\d+)\)?\s*$/gm)].map((m) => ({ url: m[1], line: Number(m[2]), col: Number(m[3]) }))
+const clipBox = (box, clips) => {
+  let b = box
+  for (const subs of clips) {
+    const r = bboxOf(subs)
+    if (!r) return null
+    const x = Math.max(b.x, r.x), y = Math.max(b.y, r.y), right = Math.min(b.x + b.w, r.x + r.w), bottom = Math.min(b.y + b.h, r.y + r.h)
+    if (right <= x || bottom <= y) return null
+    b = { x, y, w: right - x, h: bottom - y }
+  }
+  return b
+}
 
 /** A point through a 2D matrix. */
 const tx = (m, x, y) => [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f]
@@ -153,6 +169,7 @@ export function createCanvasRecorder(boot, realRaf) {
   const paths = new WeakMap() // context -> the path being built
   const p2d = new WeakMap() // Path2D -> its commands
   const stops = new WeakMap() // CanvasGradient -> [[offset, colour]]
+  let clips = new WeakMap(), clipStacks = new WeakMap()
   // canvas -> { cur: what this frame has drawn so far, done: the last whole frame, frame: which frame cur is }
   let frames = new Map()
   let withStacks = false
@@ -179,8 +196,10 @@ export function createCanvasRecorder(boot, realRaf) {
 
   function emit(ctx, kind, subs, extra = {}) {
     const canvas = ctx.canvas
-    if (!canvas || !canvas.isConnected) return
-    const bbox = bboxOf(subs)
+    if (!canvas) return
+    const clipping = clips.get(ctx) ?? []
+    const raw = bboxOf(subs)
+    const bbox = raw && clipBox(raw, clipping)
     if (!bbox) return
     // a picture is not painted with the fill style - whatever gradient was left set on the context
     // belongs to something else - so it carries no style of its own
@@ -193,11 +212,16 @@ export function createCanvasRecorder(boot, realRaf) {
       kind,
       subs,
       bbox,
+      clips: clipping.slice(),
+      matrix: matrixOf(ctx.getTransform()),
+      composite: ctx.globalCompositeOperation,
       color: styleName(style),
       stops: style && typeof style === 'object' ? stops.get(style) ?? null : null,
       gradient: geom ? { kind: geom.kind, args: geom.args, m: [t.a, t.b, t.c, t.d, t.e, t.f] } : null,
       alpha: ctx.globalAlpha,
       lineWidth: kind === 'stroke' ? ctx.lineWidth * scaleOf(ctx.getTransform()) : 0,
+      lineCap: ctx.lineCap,
+      lineJoin: ctx.lineJoin,
       seq: seq++,
       stack: withStacks ? new Error().stack : null,
       ...extra,
@@ -206,6 +230,20 @@ export function createCanvasRecorder(boot, realRaf) {
   }
 
   function rec(ctx, name, a) {
+    if (name === 'save') {
+      const stack = clipStacks.get(ctx) ?? []
+      stack.push(clips.get(ctx) ?? [])
+      clipStacks.set(ctx, stack)
+      return
+    }
+    if (name === 'restore') { clips.set(ctx, clipStacks.get(ctx)?.pop() ?? []); return }
+    if (name === 'clip') {
+      const from = a[0] && typeof a[0] === 'object' ? p2d.get(a[0]) : null
+      let path = paths.get(ctx)
+      if (from) { path = newPath(); for (const [n, args] of from) addCommand(path, ctx.getTransform(), n, args) }
+      if (path) clips.set(ctx, [...(clips.get(ctx) ?? []), path.subs.map((s) => Object.assign([...s], { closed: s.closed }))])
+      return
+    }
     if (name === 'beginPath') {
       paths.set(ctx, newPath())
       return
@@ -280,6 +318,23 @@ export function createCanvasRecorder(boot, realRaf) {
         source: img,
         place: { dx, dy, dw, dh, sx, sy, sw, sh, m: [m.a, m.b, m.c, m.d, m.e, m.f] },
       })
+      // The picture can be a whole scene assembled off screen. Keep the
+      // original drawings and their source stacks inside it, including the
+      // crop and destination clip; a cached ground is not one huge object.
+      const source = frames.get(img)
+      const children = source?.cur.length ? source.cur : source?.done ?? []
+      if (img !== ctx.canvas && sw && sh && children.length) {
+        const placement = mul(matrixOf(m), [dw / sw, 0, 0, dh / sh, dx - sx * dw / sw, dy - sy * dh / sh])
+        const projectSubs = (subs) => subs.map((s) => Object.assign(s.flatMap((_, i) => i % 2 ? [] : (() => { const p = apply(placement, { x: s[i], y: s[i + 1] }); return [p.x, p.y] })()), { closed: s.closed }))
+        const destinationClips = [...(clips.get(ctx) ?? []), [sub]]
+        for (const child of children) {
+          if (child.composite && child.composite !== 'source-over') continue
+          const subs = projectSubs(child.subs), cut = [...destinationClips, ...(child.clips ?? []).map(projectSubs)]
+          const bbox = clipBox(bboxOf(subs), cut)
+          if (!bbox) continue
+          entry(ctx.canvas).cur.push({ ...child, canvas: ctx.canvas, subs, bbox, clips: cut, alpha: child.alpha * ctx.globalAlpha, lineWidth: child.lineWidth * scaleOf({ a: placement[0], b: placement[1], c: placement[2], d: placement[3] }), seq: seq++, matrix: mul(placement, child.matrix), ...(child.place ? { place: { ...child.place, m: mul(placement, child.place.m) } } : {}) })
+        }
+      }
       return
     }
     addCommand(path, m, name, a)
@@ -314,6 +369,7 @@ export function createCanvasRecorder(boot, realRaf) {
    */
   async function capture({ stacks = false } = {}) {
     frames = new Map()
+    clips = new WeakMap(); clipStacks = new WeakMap()
     withStacks = stacks
     seq = 0
     boot.rec = rec
@@ -337,11 +393,251 @@ export function createCanvasRecorder(boot, realRaf) {
     }
     const out = new Map()
     // the last whole frame; a frozen page's one redraw is the frame it shows
-    for (const [c, e] of frames) out.set(c, boot.isFrozen?.() ? (e.cur.length ? e.cur : e.done ?? []) : e.done ?? e.cur)
+    for (const [c, e] of frames) if (c.isConnected) out.set(c, boot.isFrozen?.() ? (e.cur.length ? e.cur : e.done ?? []) : e.done ?? e.cur)
     return out
   }
 
-  return { capture }
+  /** Preview the same context transform the source wrapper will write.
+   * Only the requested frozen redraw pays for stack lookup; the ordinary
+   * canvas hook still reads one property and calls straight through.
+   */
+  function redraw(previews) {
+    if (!boot.isFrozen?.()) return
+    const roots = new Map()
+    const previous = boot.rec
+    boot.rec = (ctx, name, args) => {
+      const stack = functionsIn(new Error().stack)
+      const matches = previews.filter((p) => stack.some((f) => frameKey(f) === p.key))
+      if (!matches.length || name === 'clearRect') return
+      let n = [1, 0, 0, 1, 0, 0]
+      for (const p of matches) {
+        let contexts = roots.get(p)
+        if (!contexts) roots.set(p, (contexts = new WeakMap()))
+        let root = contexts.get(ctx)
+        if (!root) contexts.set(ctx, (root = matrixOf(ctx.getTransform())))
+        const inverse = inv(root)
+        if (inverse) n = mul(mul(root, mul(p.matrix, inverse)), n)
+      }
+      if (['save', 'restore', 'beginPath', 'clip', 'closePath'].includes(name)) return
+      const before = boot.rec
+      boot.rec = null
+      ctx.save()
+      ctx.setTransform(...mul(n, matrixOf(ctx.getTransform())))
+      boot.rec = before
+      return () => { const active = boot.rec; boot.rec = null; ctx.restore(); boot.rec = active }
+    }
+    try { for (let i = 0; i < 4; i++) boot.step?.(0) } finally { boot.rec = previous }
+  }
+
+  function matchesSkip(ctx, kind, b, skipItems) {
+    if (!b) return false
+    for (const it of skipItems) {
+      if (it.canvas && it.canvas !== ctx.canvas) continue
+      if (it.kind !== kind && !(kind === 'fillRect' && it.kind === 'fill') && !(kind === 'strokeRect' && it.kind === 'stroke')) continue
+      const ib = it.bbox
+      if (!ib) continue
+      if (Math.abs(b.x - ib.x) <= 3 && Math.abs(b.y - ib.y) <= 3 && Math.abs(b.w - ib.w) <= 3 && Math.abs(b.h - ib.h) <= 3) {
+        return true
+      }
+    }
+    return false
+  }
+
+  function captureCleanCanvases(skipItems = []) {
+    if (!skipItems.length) return new Map()
+    const canvases = new Set(skipItems.map((it) => it.canvas).filter(Boolean))
+    const cleanMap = new Map()
+    const drawnCanvases = new Set()
+
+    if (boot.isFrozen?.()) {
+      const cleanPaths = new WeakMap()
+      const previous = boot.rec
+      boot.rec = (ctx, name, a) => {
+        let path = cleanPaths.get(ctx)
+        if (!path) cleanPaths.set(ctx, (path = newPath()))
+        const m = ctx.getTransform()
+        if (name === 'beginPath') {
+          cleanPaths.set(ctx, newPath())
+          return
+        }
+        if (name === 'fill' || name === 'stroke') {
+          drawnCanvases.add(ctx.canvas)
+          const from = a[0] && typeof a[0] === 'object' ? p2d.get(a[0]) : null
+          let subs = path.subs
+          if (from) {
+            const tmp = newPath()
+            for (const [n, args] of from) addCommand(tmp, m, n, args)
+            subs = tmp.subs
+          }
+          const b = bboxOf(subs)
+          if (matchesSkip(ctx, name, b, skipItems)) return { skip: true }
+          return
+        }
+        if (name === 'fillRect' || name === 'strokeRect') {
+          drawnCanvases.add(ctx.canvas)
+          const [x, y, w, hh] = a
+          const sub = [...tx(m, x, y), ...tx(m, x + w, y), ...tx(m, x + w, y + hh), ...tx(m, x, y + hh)]
+          const b = bboxOf([sub])
+          if (matchesSkip(ctx, name === 'fillRect' ? 'fill' : 'stroke', b, skipItems)) return { skip: true }
+          return
+        }
+        if (name === 'fillText' || name === 'strokeText') {
+          drawnCanvases.add(ctx.canvas)
+          const text = String(a[0])
+          for (const it of skipItems) {
+            if (it.canvas === ctx.canvas && (it.kind === 'text' || it.kind === 'strokeText') && it.text === text) {
+              return { skip: true }
+            }
+          }
+          return
+        }
+        if (name === 'drawImage') {
+          drawnCanvases.add(ctx.canvas)
+          let dx = a.length >= 9 ? a[5] : a.length >= 5 ? a[1] : a[1]
+          let dy = a.length >= 9 ? a[6] : a.length >= 5 ? a[2] : a[2]
+          let dw = a.length >= 9 ? a[7] : a.length >= 5 ? a[3] : (a[0]?.naturalWidth ?? a[0]?.width ?? 0)
+          let dh = a.length >= 9 ? a[8] : a.length >= 5 ? a[4] : (a[0]?.naturalHeight ?? a[0]?.height ?? 0)
+          const sub = [...tx(m, dx, dy), ...tx(m, dx + dw, dy), ...tx(m, dx + dw, dy + dh), ...tx(m, dx, dy + dh)]
+          const b = bboxOf([sub])
+          if (matchesSkip(ctx, 'image', b, skipItems)) return { skip: true }
+          return
+        }
+        addCommand(path, m, name, a)
+      }
+      try {
+        for (let i = 0; i < 4; i++) {
+          drawnCanvases.clear()
+          boot.step?.(0)
+          if (canvases.size && [...canvases].every((cv) => drawnCanvases.has(cv))) break
+        }
+      } finally {
+        boot.rec = previous
+      }
+    }
+
+    for (const cv of canvases) {
+      const copy = typeof document !== 'undefined' && document.createElement
+        ? document.createElement('canvas')
+        : { width: cv.width, height: cv.height, getContext: () => ({ drawImage: () => {}, clearRect: () => {} }) }
+      copy.width = cv.width
+      copy.height = cv.height
+      const cctx = copy.getContext('2d')
+      cctx.drawImage(cv, 0, 0)
+      if (!drawnCanvases.has(cv)) {
+        for (const it of skipItems) {
+          if (it.canvas === cv && it.bbox) {
+            cctx.clearRect(it.bbox.x - 2, it.bbox.y - 2, it.bbox.w + 4, it.bbox.h + 4)
+          }
+        }
+      }
+      cleanMap.set(cv, copy)
+    }
+
+    return cleanMap
+  }
+
+  return { capture, redraw, captureCleanCanvases }
+}
+
+function strokeColorOf(d) {
+  if (d.color && d.color !== 'gradient' && d.color !== 'pattern') return d.color
+  if (d.stops && d.stops.length && typeof d.stops[0][1] === 'string') return d.stops[0][1]
+  return '#ffffff'
+}
+
+function fillColorOf(d) {
+  if (d.color && d.color !== 'gradient' && d.color !== 'pattern') return d.color
+  if (d.stops && d.stops.length && typeof d.stops[0][1] === 'string') return d.stops[0][1]
+  return '#ffffff'
+}
+
+export function renderDrawing(ctx, d) {
+  if (!d) return
+  ctx.save()
+  if (d.composite) ctx.globalCompositeOperation = d.composite
+  if (d.alpha !== undefined && d.alpha !== null) ctx.globalAlpha = d.alpha
+
+  if (d.clips?.length) {
+    for (const clipSubs of d.clips) {
+      ctx.beginPath()
+      for (const sub of clipSubs) {
+        for (let i = 0; i < sub.length; i += 2) {
+          if (i === 0) ctx.moveTo(sub[i], sub[i + 1])
+          else ctx.lineTo(sub[i], sub[i + 1])
+        }
+        if (sub.closed) ctx.closePath()
+      }
+      ctx.clip()
+    }
+  }
+
+  if (d.kind === 'fill' || d.kind === 'stroke') {
+    if (d.arcs && d.arcs.length === 1 && d.arcs[0].full && d.bbox && Math.abs(d.bbox.w - d.bbox.h) < 1.5) {
+      ctx.beginPath()
+      const cx = d.bbox.x + d.bbox.w / 2
+      const cy = d.bbox.y + d.bbox.h / 2
+      const r = (d.bbox.w + d.bbox.h) / 4
+      ctx.arc(cx, cy, r, 0, Math.PI * 2)
+      if (d.kind === 'fill') {
+        ctx.fillStyle = fillColorOf(d)
+        ctx.fill()
+      } else {
+        ctx.strokeStyle = strokeColorOf(d)
+        ctx.lineWidth = d.lineWidth || 1
+        if (d.lineCap) ctx.lineCap = d.lineCap
+        if (d.lineJoin) ctx.lineJoin = d.lineJoin
+        ctx.stroke()
+      }
+    } else if (d.subs) {
+      ctx.beginPath()
+      for (const sub of d.subs) {
+        for (let i = 0; i < sub.length; i += 2) {
+          if (i === 0) ctx.moveTo(sub[i], sub[i + 1])
+          else ctx.lineTo(sub[i], sub[i + 1])
+        }
+        if (sub.closed) ctx.closePath()
+      }
+      if (d.kind === 'fill') {
+        ctx.fillStyle = fillColorOf(d)
+        ctx.fill()
+      } else {
+        ctx.strokeStyle = strokeColorOf(d)
+        ctx.lineWidth = d.lineWidth || 1
+        if (d.lineCap) ctx.lineCap = d.lineCap
+        if (d.lineJoin) ctx.lineJoin = d.lineJoin
+        ctx.stroke()
+      }
+    }
+  } else if (d.kind === 'fillRect') {
+    ctx.fillStyle = fillColorOf(d)
+    ctx.fillRect(d.bbox.x, d.bbox.y, d.bbox.w, d.bbox.h)
+  } else if (d.kind === 'strokeRect') {
+    ctx.strokeStyle = strokeColorOf(d)
+    ctx.lineWidth = d.lineWidth || 1
+    if (d.lineCap) ctx.lineCap = d.lineCap
+    if (d.lineJoin) ctx.lineJoin = d.lineJoin
+    ctx.strokeRect(d.bbox.x, d.bbox.y, d.bbox.w, d.bbox.h)
+  } else if (d.kind === 'text' || d.kind === 'strokeText') {
+    if (d.font) ctx.font = d.font
+    if (d.kind === 'text') {
+      ctx.fillStyle = fillColorOf(d)
+      ctx.fillText(d.text, d.bbox.x, d.bbox.y + d.bbox.h)
+    } else {
+      ctx.strokeStyle = strokeColorOf(d)
+      ctx.lineWidth = d.lineWidth || 1
+      if (d.lineCap) ctx.lineCap = d.lineCap
+      if (d.lineJoin) ctx.lineJoin = d.lineJoin
+      ctx.strokeText(d.text, d.bbox.x, d.bbox.y + d.bbox.h)
+    }
+  } else if (d.kind === 'image' && d.source) {
+    const p = d.place
+    if (p) {
+      ctx.drawImage(d.source, p.sx, p.sy, p.sw, p.sh, d.bbox.x, d.bbox.y, d.bbox.w, d.bbox.h)
+    } else {
+      ctx.drawImage(d.source, d.bbox.x, d.bbox.y, d.bbox.w, d.bbox.h)
+    }
+  }
+  ctx.restore()
 }
 
 /* ------------------------------------------------------------------ */
@@ -401,15 +697,18 @@ export function itemsAt(items, x, y) {
     const it = items[i]
     const b = it.bbox
     if (it.alpha < 0.03) continue
-    const pad = Math.max(tol, it.lineWidth / 2 + tol, b.w < 10 * k && b.h < 10 * k ? 8 * k : 0)
+    const sTol = it.kind === 'stroke' || it.kind === 'strokeText' ? Math.max(8 * k, it.lineWidth / 2 + 6 * k) : tol
+    const pad = Math.max(tol, sTol, b.w < 10 * k && b.h < 10 * k ? 8 * k : 0)
     if (px < b.x - pad || px > b.x + b.w + pad || py < b.y - pad || py > b.y + b.h + pad) continue
+    if ((it.clips ?? []).some((clip) => !inside(px, py, clip))) continue
     let hit = false
     if (b.w < 10 * k && b.h < 10 * k) hit = true
     else if (it.kind === 'stroke' || it.kind === 'strokeText') {
+      const lineTol = Math.max(8 * k, it.lineWidth / 2 + 6 * k)
       for (const s of it.subs) {
         const n = s.length
-        for (let j = 0; j + 3 < n && !hit; j += 2) if (distToSeg(px, py, s[j], s[j + 1], s[j + 2], s[j + 3]) <= it.lineWidth / 2 + tol) hit = true
-        if (!hit && s.closed && n >= 4 && distToSeg(px, py, s[n - 2], s[n - 1], s[0], s[1]) <= it.lineWidth / 2 + tol) hit = true
+        for (let j = 0; j + 3 < n && !hit; j += 2) if (distToSeg(px, py, s[j], s[j + 1], s[j + 2], s[j + 3]) <= lineTol) hit = true
+        if (!hit && s.closed && n >= 4 && distToSeg(px, py, s[n - 2], s[n - 1], s[0], s[1]) <= lineTol) hit = true
         if (hit) break
       }
     } else if (it.kind === 'text') hit = true

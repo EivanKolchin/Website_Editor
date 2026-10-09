@@ -32,9 +32,9 @@ const command = rest[0] ?? 'start'
 const opts = { root: flags.root, configPath: flags.config, port: flags.port, path: flags.path, noOpen: !!flags.noOpen, page: !!flags.page, skipBefore: !!flags.skipBefore }
 
 try {
-  if (command === 'start') {
+  if (command === 'start' || command === 'setup') {
     const { start } = await import('../src/server/start.mjs')
-    await start(opts)
+    await start({ ...opts, setup: command === 'setup' })
   } else if (command === 'map') {
     const { map } = await import('../src/ai/map.mjs')
     await map({ ...opts, model: flags.model, effort: flags.effort, yes: !!flags.yes })
@@ -42,7 +42,7 @@ try {
     const { doctor } = await import('../src/server/doctor.mjs')
     await doctor(opts)
   } else {
-    console.log('usage: retouch [start|map|doctor] [--root dir] [--config file] [--port n] [--path /page] [--no-open] [--page]')
+    console.log('usage: retouch [start|setup|map|doctor] [--root dir] [--config file] [--port n] [--path /page] [--no-open] [--page]')
     process.exit(command === 'help' || command === '--help' ? 0 : 1)
   }
 } catch (e) {

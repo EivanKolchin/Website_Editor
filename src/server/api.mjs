@@ -10,7 +10,7 @@ import { readJson, RetouchError, sendJson } from './util.mjs'
  * that knows the port still cannot read that token, so it cannot ask this
  * server to change a file.
  */
-export function createApi({ ops, project, journal, checker, config, token, notify, rebuilder, tracer, settings, sources }) {
+export function createApi({ ops, project, journal, checker, config, token, notify, rebuilder, tracer, settings, sources, projects }) {
   /** After files change: their generators, then the project's check. */
   async function afterWrite(files) {
     const rebuilt = rebuilder ? await rebuilder.after(files) : []
@@ -20,6 +20,16 @@ export function createApi({ ops, project, journal, checker, config, token, notif
   }
 
   const routes = {
+    ...(projects ? {
+      'GET /projects': () => ({ projects: projects.list(), current: { name: config.name, root: config.root } }),
+      'POST /projects/pick': async () => ({ root: await projects.pick() }),
+      'GET /projects/setup': () => projects.setup(),
+      'POST /projects/prompt': (body) => ({ prompt: projects.prompt(body.root) }),
+      'POST /projects/import': (body) => ({ job: projects.begin(body, config.root, project.server) }),
+      'POST /projects/status': (body) => ({ job: projects.status(body.id) }),
+      'POST /projects/cancel': async (body) => ({ job: await projects.cancel(body.id) }),
+      'POST /projects/verify': async (body) => ({ job: await projects.verify(body, { config, project, sources, ops, tracer }) }),
+    } : {}),
     'GET /config': () => ({
       name: config.name,
       root: project.root,
@@ -32,6 +42,7 @@ export function createApi({ ops, project, journal, checker, config, token, notif
     }),
     'GET /history': () => ({ batches: journal.summary() }),
     'POST /inspect': async (body) => ({ items: await ops.inspect(body.items) }),
+    'POST /drawing/inspect': async (body) => ({ scopes: await ops.inspectDrawing(body.frames) }),
     'POST /text/resolve': async (body) => ops.resolveText(body),
     'POST /text/find': async (body) => ({ candidates: ops.findText(body) }),
     'POST /color/check': async (body) => ({ warnings: colorWarnings(config, body.value) }),

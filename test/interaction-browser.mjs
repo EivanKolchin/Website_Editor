@@ -1,0 +1,136 @@
+// Optional integration gate: uses the host project's Puppeteer and an installed
+// Chromium browser. All fixture sources/caches stay in a temporary directory.
+import assert from 'node:assert/strict'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, unlinkSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+import { normalise, TOOL_DIR } from '../src/server/config.mjs'
+import { retouchPlugin } from '../src/server/plugin.mjs'
+import { loadParser } from '../src/server/ast.mjs'
+import { importVite } from '../src/server/start.mjs'
+
+const host = resolve(TOOL_DIR, '..'), require = createRequire(join(host, 'package.json'))
+const puppeteer = require('puppeteer')
+const { PNG } = require('pngjs')
+const react = (await import(pathToFileURL(require.resolve('@vitejs/plugin-react')).href)).default
+const vite = await importVite(host)
+const dir = mkdtempSync(join(tmpdir(), 'retouch-interaction-browser-'))
+const nodeModules = join(dir, 'node_modules')
+symlinkSync(join(host, 'node_modules'), nodeModules, 'junction')
+mkdirSync(join(dir, 'src'))
+writeFileSync(join(dir, 'package.json'), JSON.stringify({ type: 'module', name: 'Animation preview test' }))
+writeFileSync(join(dir, 'index.html'), '<html><head><title>Animation preview test</title></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>')
+const source = `import React, { useEffect } from 'react'; import { createRoot } from 'react-dom/client'; import './style.css';
+function App() { useEffect(() => { const scene = document.querySelector('.scene'), canvas = document.querySelector('canvas'), out = document.querySelector('output'), ctx = canvas.getContext('2d'); let id; function draw(t) { const s = scene.scrollTop; out.textContent = Math.round(s) + ' / ' + Math.round(t); ctx.fillStyle = 'hsl(' + (s / 12) + ' 60% 24%)'; ctx.fillRect(0,0,800,600); ctx.fillStyle = '#ffffff'; ctx.font = '40px sans-serif'; ctx.fillText('Scene ' + Math.round(s),40,300); id = requestAnimationFrame(draw); } id = requestAnimationFrame(draw); return () => cancelAnimationFrame(id); }, []); return <main className="scene"><div className="track"><section className="scene-stage"><canvas width="800" height="600"/><h1>Animation studio</h1><div className="moving">Moving title</div><output/></section></div></main> }
+createRoot(document.getElementById('root')).render(<App/>);`
+writeFileSync(join(dir, 'src/main.jsx'), source)
+writeFileSync(join(dir, 'src/style.css'), 'html,body,#root{margin:0;height:100%;font-family:system-ui;background:#102030;color:white} .scene{height:100vh;overflow:hidden;overscroll-behavior:contain} .track{height:7000px} .scene-stage{height:100vh;position:sticky;top:0} canvas{position:absolute;inset:0;width:100%;height:100%} h1{position:absolute;top:45px;left:40px} output{position:absolute;left:40px;bottom:40px}.moving{position:absolute;left:40px;top:130px;animation:move 30s linear infinite}@keyframes move{to{transform:translateX(250px)}}')
+let browser, server
+const errors = []
+try {
+  loadParser(host)
+  const config = normalise({ name: 'Animation preview test', vite: { port: 5289 } }, dir)
+  server = await vite.createServer({ configFile: false, root: dir, cacheDir: join(dir, '.cache/vite'), plugins: [react(), retouchPlugin({ config })], server: { port: 5289, strictPort: true, host: '127.0.0.1' } })
+  await server.listen()
+  browser = await puppeteer.launch({ executablePath: process.env.RETOUCH_TEST_BROWSER || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', headless: true, args: ['--no-first-run', '--disable-features=msEdgeSidebarV2'] })
+  const page = await browser.newPage()
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.setViewport({ width: 1440, height: 940, deviceScaleFactor: 1 })
+  await page.goto('http://127.0.0.1:5289/__retouch/studio', { waitUntil: 'networkidle0' })
+  const frame = page.frames().find((f) => f.url().endsWith(':5289/'))
+  await frame.waitForFunction(() => !!window.__RETOUCH__?.app)
+  await frame.evaluate(async () => { const c = window.__RETOUCH__.app; await c.selectElement(document.querySelector('canvas'), { exact: true }); c.setFrozen(true) })
+  const initial = await frame.evaluate(() => ({ top: document.querySelector('.scene').scrollTop, time: window.__RETOUCH__.time() }))
+  const rect = await page.$eval('.frame', (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } })
+  await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2)
+  await page.mouse.wheel({ deltaY: 180 })
+  await frame.waitForFunction(() => document.querySelector('.scene').scrollTop >= 180)
+  const after = await frame.evaluate(() => ({ top: document.querySelector('.scene').scrollTop, time: window.__RETOUCH__.time(), output: document.querySelector('output').textContent }))
+  assert.equal(after.time, initial.time, 'scrolling leaves the frozen clock alone')
+  assert.ok(after.output.startsWith('180 /'), 'the frozen drawing redraws at the new scroll')
+  const slider = await page.$eval('.jog', (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } })
+  const y = slider.y + slider.height / 2
+  await page.mouse.move(slider.x + slider.width * .25, y)
+  await page.mouse.down()
+  await page.mouse.move(slider.x + slider.width * .75, y, { steps: 5 })
+  await page.waitForFunction(() => !!document.querySelector('.scrub-hold') && !document.querySelector('.scrub-preview').hidden)
+  await page.waitForFunction(() => {
+    const doc = document.querySelector('.scrub-preview iframe').contentDocument
+    return doc?.querySelector('output')?.textContent.startsWith(String(Math.round(window.__RETOUCH_SHELL__ ? document.querySelector('.jog').getAttribute('aria-valuenow') : 0)))
+  })
+  const during = await page.evaluate(() => {
+    const hold = document.querySelector('.scrub-hold iframe').contentDocument
+    const preview = document.querySelector('.scrub-preview iframe').contentDocument
+    return { held: hold.querySelector('.scene').scrollTop, proposed: preview.querySelector('.scene').scrollTop, scripts: preview.scripts.length, editors: preview.querySelectorAll('retouch-editor').length, needle: document.querySelector('.needle').style.left }
+  })
+  assert.equal(during.held, 180, 'main rendering stays at its starting position during drag')
+  assert.ok(during.proposed > 3000, 'thumbnail shows proposed later scene')
+  assert.equal(during.scripts, 0, 'snapshots run no site scripts')
+  assert.equal(during.editors, 0, 'snapshots have no editor')
+  const pixels = await page.evaluate(() => {
+    const source = document.querySelector('iframe[title="The page"]').contentDocument.querySelector('canvas')
+    const hold = document.querySelector('.scrub-hold iframe').contentDocument.querySelector('canvas')
+    const preview = document.querySelector('.scrub-preview iframe').contentDocument.querySelector('canvas')
+    return [source,hold,preview].map((canvas) => [...canvas.getContext('2d').getImageData(0,0,1,1).data])
+  })
+  assert.deepEqual(pixels[0], pixels[2], 'thumbnail has the proposed canvas pixels')
+  assert.notDeepEqual(pixels[1], pixels[2], 'held canvas stays at the original frame')
+  assert.ok(during.needle.includes('75'), 'the red line moves with the pointer')
+  const screenshot = PNG.sync.read(Buffer.from(await page.screenshot({ path: join(TOOL_DIR, 'local/timeline-preview.png') })))
+  const offset = (Math.round(rect.y + 20) * screenshot.width + Math.round(rect.x + 20)) * 4
+  assert.deepEqual([...screenshot.data.subarray(offset, offset + 4)], pixels[1], 'the browser actually paints the held canvas pixels')
+  await page.mouse.up()
+  assert.equal(await page.$('.scrub-hold'), null)
+  const committed = await frame.evaluate(() => document.querySelector('.scene').scrollTop)
+  assert.equal(committed, during.proposed, 'release applies the thumbnail position')
+  await page.mouse.move(slider.x + slider.width * .4, y)
+  await page.mouse.down()
+  await page.keyboard.press('Escape')
+  await page.mouse.up()
+  assert.equal(await frame.evaluate(() => document.querySelector('.scene').scrollTop), committed, 'Escape restores the starting scroll')
+  assert.equal(await page.$('.scrub-hold'), null)
+  await page.click('.timeline-mode')
+  const beforeTime = await frame.evaluate(() => window.__RETOUCH__.app.time())
+  await page.mouse.move(slider.x + slider.width * .5, y)
+  await page.mouse.down()
+  await page.mouse.move(slider.x + slider.width * .8, y, { steps: 5 })
+  assert.equal(await frame.evaluate(() => window.__RETOUCH__.app.time()), beforeTime, 'committed clock is unchanged while scrubbing')
+  await page.mouse.up()
+  assert.ok(await frame.evaluate(() => window.__RETOUCH__.app.time() > 20000), 'time release seeks the page clock')
+  await page.focus('.jog')
+  await page.keyboard.press('Home')
+  assert.equal(await frame.evaluate(() => window.__RETOUCH__.app.time()), 0, 'keyboard can seek back to the beginning')
+  await page.keyboard.press('End')
+  assert.ok(await frame.evaluate(() => window.__RETOUCH__.app.time() >= 30000))
+  await page.mouse.move(slider.x + slider.width / 2, y)
+  await page.mouse.wheel({ deltaY: -80 })
+  await page.waitForFunction(() => !document.querySelector('.scrub-preview').hidden)
+  await page.waitForFunction(() => document.querySelector('.scrub-preview').hidden)
+  await page.evaluate(() => window.__RETOUCH_SHELL__.zoomKey('in'))
+  const stageStart = await page.$eval('.stage', (el) => el.scrollTop)
+  await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2)
+  await page.mouse.wheel({ deltaY: 200 })
+  await page.waitForFunction((before) => document.querySelector('.stage').scrollTop > before, {}, stageStart)
+  const bounded = await page.$eval('.stage', (el) => el.getBoundingClientRect().bottom <= innerHeight - 39)
+  assert.ok(bounded, 'zoom keeps the stage bounded and scrollable')
+  await page.setViewport({ width: 540, height: 780 })
+  await page.evaluate(() => window.__RETOUCH_SHELL__.zoomKey('fit'))
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))))
+  const mobile = await page.$eval('.jog', (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } })
+  await page.mouse.move(mobile.x + mobile.width * .8, mobile.y + mobile.height / 2)
+  await page.mouse.down()
+  await page.waitForFunction(() => !document.querySelector('.scrub-preview').hidden)
+  assert.ok(await page.$eval('.scrub-preview', (el) => { const r = el.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 }), 'preview stays inside narrow screens')
+  await page.screenshot({ path: join(TOOL_DIR, 'local/timeline-mobile.png') })
+  await page.mouse.up()
+  assert.equal(readFileSync(join(dir, 'src/main.jsx'), 'utf8'), source, 'interactions never write site source')
+  assert.deepEqual(errors, [], 'browser has no runtime errors')
+  console.log('Browser scrolling, page/time previews, release/cancel, wheel, keyboard, zoom and narrow layout passed.')
+} finally {
+  await browser?.close()
+  await server?.close()
+  unlinkSync(nodeModules)
+  rmSync(dir, { recursive: true, force: true })
+}

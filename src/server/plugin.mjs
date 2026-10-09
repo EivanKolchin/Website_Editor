@@ -28,7 +28,7 @@ const MODULE_RE = /\.(m?[jt]sx?|cts|json)$/i
  *
  * `apply: 'serve'`: nothing here ever reaches a production build.
  */
-export function retouchPlugin({ config, onClientsChange, searchForWorkspaceRoot }) {
+export function retouchPlugin({ config, onClientsChange, searchForWorkspaceRoot, projects }) {
   const root = config.root
   const token = randomBytes(18).toString('hex')
   const sources = new Sources(root)
@@ -99,20 +99,20 @@ export function retouchPlugin({ config, onClientsChange, searchForWorkspaceRoot 
             'html[data-retouch-picking],html[data-retouch-picking] *{cursor:crosshair!important}',
         },
         { tag: 'script', injectTo: 'head-prepend', children: freezeSnippet(boot) },
-        { tag: 'script', injectTo: 'body', attrs: { type: 'module', src: '/@fs/' + clientEntry.replace(/^\//, '') } },
+        { tag: 'script', injectTo: 'body', attrs: { type: 'module', src: (server?.config.base ?? '/') + '@fs/' + clientEntry.replace(/^\//, '') } },
       ]
     },
 
     configureServer(s) {
       server = s
       project.attach(s)
-      const api = createApi({ ops, project, journal, checker, config, token, rebuilder, tracer, settings, sources, notify: (d) => send('retouch:event', d) })
+      const api = createApi({ ops, project, journal, checker, config, token, rebuilder, tracer, settings, sources, projects, notify: (d) => send('retouch:event', d) })
       // the studio: the page in a frame with the editor's panels around it (studio.mjs)
       s.middlewares.use('/__retouch/studio', (req, res, next) => {
         if (req.method !== 'GET') return next()
         res.setHeader('Content-Type', 'text/html; charset=utf-8')
         res.setHeader('Cache-Control', 'no-store')
-        res.end(studioPage({ name: config.name, entry: '/@fs/' + studioEntry.replace(/^\//, ''), icons: projectIcons(s.config.root, s.config.base) }))
+        res.end(studioPage({ name: config.name, entry: s.config.base + '@fs/' + studioEntry.replace(/^\//, ''), icons: projectIcons(s.config.root, s.config.base), boot: { token, api: '/__retouch', name: config.name, root } }))
       })
       s.middlewares.use('/__retouch', api)
       let clients = 0
@@ -145,7 +145,14 @@ export function retouchPlugin({ config, onClientsChange, searchForWorkspaceRoot 
  */
 function freezeSnippet(boot) {
   return `(() => {
-  const R = (window.__RETOUCH__ = ${JSON.stringify(boot)});
+  const R = (window.__RETOUCH__ = ${JSON.stringify(boot).replace(/</g, '\\u003c')});
+  R.importErrors = [];
+  try {
+    if (new URLSearchParams(parent.location.search).has('importJob')) {
+      addEventListener('error', (e) => { if (e.message && R.importErrors.length < 8) R.importErrors.push(e.message); });
+      addEventListener('unhandledrejection', (e) => { if (R.importErrors.length < 8) R.importErrors.push(String(e.reason?.message || e.reason)); });
+    }
+  } catch {}
   const raf = window.requestAnimationFrame.bind(window);
   const caf = window.cancelAnimationFrame.bind(window);
   const realNow = performance.now.bind(performance);
@@ -155,17 +162,31 @@ function freezeSnippet(boot) {
   const reanchor = () => { const r = realNow(); vAnchor = warp(r); rAnchor = r; };
   try { performance.now = () => warp(realNow()); } catch (e) {}
   const queue = new Map();
+  const scheduled = new Map();
   let paused = [];
+  let animationClock = new WeakMap();
   const anims = () => (document.getAnimations ? document.getAnimations() : []);
   /* R.frameT names the frame being drawn, so a recording can tell one frame's drawing from the next */
   R.frameT = 0;
+  const schedule = (id, cb) => {
+    scheduled.set(id, raf((t) => {
+      scheduled.delete(id);
+      if (!queue.has(id) || frozen) return;
+      queue.delete(id);
+      R.frameT = t;
+      cb(warp(t));
+    }));
+  };
   window.requestAnimationFrame = (cb) => {
-    if (!frozen) return raf((t) => { R.frameT = t; cb(warp(t)); });
     const id = next++;
     queue.set(id, cb);
+    if (!frozen) schedule(id, cb);
     return id;
   };
-  window.cancelAnimationFrame = (id) => { if (queue.delete(id)) return; caf(id); };
+  window.cancelAnimationFrame = (id) => {
+    queue.delete(id);
+    if (scheduled.has(id)) { caf(scheduled.get(id)); scheduled.delete(id); }
+  };
   R.raf = raf;
   R.realNow = realNow;
   R.isFrozen = () => frozen;
@@ -177,14 +198,18 @@ function freezeSnippet(boot) {
     frozen = on;
     document.documentElement.toggleAttribute('data-retouch-frozen', on);
     if (on) {
+      scheduled.forEach((id) => caf(id));
+      scheduled.clear();
       paused = anims().filter((a) => a.playState === 'running');
       paused.forEach((a) => { try { a.pause(); } catch (e) {} });
+      animationClock = new WeakMap();
+      anims().forEach((a) => {
+        if (typeof a.currentTime === 'number') animationClock.set(a, { clock: vAnchor, local: a.currentTime, last: a.currentTime, rate: a.playbackRate / speed });
+      });
     } else {
       paused.forEach((a) => { try { a.play(); } catch (e) {} });
       paused = [];
-      const cbs = [...queue.values()];
-      queue.clear();
-      cbs.forEach((cb) => raf((t) => { R.frameT = t; cb(warp(t)); }));
+      queue.forEach((cb, id) => schedule(id, cb));
     }
     try { if (R.onchange) R.onchange(); } catch (e) {}
   };
@@ -203,12 +228,27 @@ function freezeSnippet(boot) {
   R.step = (ms) => {
     ms = ms == null ? 1000 / 60 : ms;
     if (!frozen) R.freeze(true);
+    const previous = vAnchor;
     vAnchor = Math.max(0, vAnchor + ms);
     const cbs = [...queue.values()];
     queue.clear();
     R.frameT = 'step' + realNow();
     cbs.forEach((cb) => { try { cb(vAnchor); } catch (e) { console.error(e); } });
-    if (ms) anims().forEach((a) => { try { if (a.playState === 'paused') a.currentTime = Math.max(0, (a.currentTime || 0) + ms * (a.playbackRate || 1)); } catch (e) {} });
+    if (ms) anims().forEach((a) => {
+      try {
+        if (typeof a.currentTime !== 'number' || !['paused', 'finished'].includes(a.playState)) return;
+        let at = animationClock.get(a);
+        if (!at || Math.abs(a.currentTime - at.last) > 0.01) {
+          at = { clock: previous, local: a.currentTime, last: a.currentTime, rate: a.playbackRate / speed };
+          animationClock.set(a, at);
+        }
+        if (a.playState === 'finished') a.pause();
+        // Negative local time is the state BEFORE an animation starts. Clamping
+        // it to zero loses its start offset and makes a rewind/restore drift.
+        at.last = at.local + (vAnchor - at.clock) * at.rate;
+        a.currentTime = at.last;
+      } catch (e) {}
+    });
   };
   R.time = () => warp(realNow());
   /* What a canvas draws, for the editor to find and select: every drawing call goes through a hook that does
@@ -218,10 +258,10 @@ function freezeSnippet(boot) {
     for (const n of names) {
       const f = proto[n];
       if (typeof f !== 'function') continue;
-      proto[n] = function () { const r = R[key]; if (r) { try { r(this, n, arguments); } catch (e) {} } return f.apply(this, arguments); };
+      proto[n] = function () { const r = R[key]; if (!r) return f.apply(this, arguments); let after; try { after = r(this, n, arguments); } catch (e) {} if (after === false || (after && after.skip)) return; try { return f.apply(this, arguments); } finally { if (typeof after === 'function') after(); } };
     }
   };
-  hook(window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype, ['beginPath', 'closePath', 'moveTo', 'lineTo', 'arc', 'arcTo', 'ellipse', 'rect', 'roundRect', 'bezierCurveTo', 'quadraticCurveTo', 'fill', 'stroke', 'fillRect', 'strokeRect', 'clearRect', 'fillText', 'strokeText', 'drawImage'], 'rec');
+  hook(window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype, ['save', 'restore', 'clip', 'beginPath', 'closePath', 'moveTo', 'lineTo', 'arc', 'arcTo', 'ellipse', 'rect', 'roundRect', 'bezierCurveTo', 'quadraticCurveTo', 'fill', 'stroke', 'fillRect', 'strokeRect', 'clearRect', 'fillText', 'strokeText', 'drawImage'], 'rec');
   hook(window.Path2D && Path2D.prototype, ['moveTo', 'lineTo', 'arc', 'arcTo', 'ellipse', 'rect', 'roundRect', 'bezierCurveTo', 'quadraticCurveTo', 'closePath', 'addPath'], 'recPath');
   hook(window.CanvasGradient && CanvasGradient.prototype, ['addColorStop'], 'recStop');
   /* where a gradient runs, kept on the gradient itself: pages make one once and paint with it every frame, so

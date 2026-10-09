@@ -19,6 +19,10 @@ import { cleanId, hash, isUnder, posix, relTo } from './util.mjs'
 export function createTracer({ project, config, rebuilder, getServer }) {
   const root = project.root
   const rel = (f) => relTo(root, f)
+  const withoutBase = (path) => {
+    const base = getServer()?.config?.base
+    return base && base !== '/' && path.startsWith(base) ? '/' + path.slice(base.length) : path
+  }
   const lineOf = (code, offset) => {
     const starts = lineStarts(code)
     const l = lineAt(starts, offset)
@@ -106,7 +110,7 @@ export function createTracer({ project, config, rebuilder, getServer }) {
     } catch {
       return null
     }
-    path = decodeURIComponent(path)
+    path = decodeURIComponent(withoutBase(path))
     if (path.startsWith('/@fs/')) {
       const f = posix(path.slice(4).replace(/^\/([A-Za-z]:)/, '$1'))
       return existsSync(f) && project.allowed(f) ? f : null
@@ -130,7 +134,7 @@ export function createTracer({ project, config, rebuilder, getServer }) {
     let path
     try {
       const u = new URL(url, 'http://localhost')
-      path = u.pathname + u.search.replace(/[?&]t=\d+/, '').replace(/^&/, '?')
+      path = withoutBase(u.pathname) + u.search.replace(/[?&]t=\d+/, '').replace(/^&/, '?')
     } catch {
       return null
     }

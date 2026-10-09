@@ -4,8 +4,9 @@ import * as G from './geometry.js'
 import { createFinder, FINDER_CSS } from './finder.js'
 import { createHistory } from './history.js'
 import { createInspector, INSPECTOR_CSS } from './inspector.js'
+import { probeImport } from './import-probe.js'
 import { colorDistance, parseColor, rgbToHex } from './palette.js'
-import { createCanvasRecorder, findAgain, itemName, itemsAt, pageRect, scaleFor, siteOf } from './canvas.js'
+import { createCanvasRecorder, findAgain, itemName, itemsAt, pageRect, renderDrawing, scaleFor, siteOf } from './canvas.js'
 import { createPicker, pixelOf } from './pick.js'
 import { baseOf, countStamps, fiberOf, isSvgChild, peersOf, unitChain, unitFor } from './react.js'
 import { alignmentGuides, collectGroupTargets, collectTargets, createGuideLayer, dropMoving, rectOf, snapAngle, snapMove, snapScale, unionBox } from './snap.js'
@@ -14,6 +15,9 @@ import { animationsOf, colorsIn, matchedRules, normSelector, SHORTHAND, stateRul
 import { bandOf, canvasToneArea, cssToneArea, parseCssGradient } from './tones.js'
 import { buildMask, colorAt, offsetAt, paintMask } from './tonemask.js'
 import { createUI, h, icon, zoomKeyOf } from './ui.js'
+import { scrollWheel } from './scroll.js'
+import { createTimeline } from './timeline.js'
+import { paintSnapshot } from './snapshot.js'
 
 /**
  * THE EDITOR.
@@ -88,7 +92,12 @@ export function createApp(boot, hot) {
     picked: null,
     anims: [],
   }
+  const timeline = createTimeline({
+    win: window, boot, selected: () => state.sel?.el ?? state.group?.members[0]?.el, exclude: ui.host,
+    changed: () => { drawings.time = null; renderBar() },
+  })
   const recs = new Map() // element -> live edit record
+  const drawingRecs = new Map() // drawing item -> live edit record
   const blocks = new Map() // block element -> text record
   const infoCache = new Map()
   let htmlStamps = new WeakMap() // element from an HTML string -> its pseudo-stamp, or null when not found
@@ -491,6 +500,8 @@ export function createApp(boot, hot) {
     }
     history.clearRedo()
     recs.clear()
+    drawingRecs.clear()
+    activeCleanCanvases.clear()
     blocks.clear()
     declEdits.clear()
     recolors.clear()
@@ -580,8 +591,6 @@ export function createApp(boot, hot) {
       return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0.02
     })
     if (!extra.length) return stack
-    // later in the document paints later: the last canvas is the top one
-    extra.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? 1 : -1))
     // the z-index that decides where something paints: its nearest positioned ancestor's that sets one
     const zOf = (el) => {
       for (let p = el; p && p !== document.body; p = p.parentElement) {
@@ -590,6 +599,12 @@ export function createApp(boot, hot) {
       }
       return 0
     }
+    // Topmost canvas paints later: sort in descending stacking order (highest z-index first, then later in DOM first)
+    extra.sort((a, b) => {
+      const za = zOf(a), zb = zOf(b)
+      if (za !== zb) return zb - za
+      return a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? 1 : -1
+    })
     const out = []
     const left = new Set(extra)
     for (const el of stack) {
@@ -930,8 +945,90 @@ export function createApp(boot, hot) {
 
   const targetsOf = (rec) => [rec.el, ...(rec.shared ? rec.peers : [])]
 
+  function drawingRecFor(m) {
+    let rec = drawingRecs.get(m.drawing)
+    if (!rec) {
+      const r = pageRect(m.drawing)
+      rec = {
+        drawing: m.drawing,
+        member: m,
+        el: m.drawing.canvas,
+        target: m.stamp,
+        info: m.info,
+        svg: false,
+        props: null,
+        unitLabel: itemName(m.drawing),
+        base: { t: { x: 0, y: 0 }, L: G.I(), raw: { translate: 'none', rotate: 'none', scale: 'none' } },
+        frame: { A: [1, 0, 0, 1, 0, 0], Ainv: [1, 0, 0, 1, 0, 0], o: { x: 0, y: 0 }, svg: false },
+        c0: { x: r.left + r.width / 2, y: r.top + r.height / 2 },
+        N: G.I(),
+        bbox0: { ...m.drawing.bbox },
+        subs0: m.drawing.subs ? m.drawing.subs.map((s) => Object.assign([...s], { closed: s.closed })) : null,
+        lineWidth0: m.drawing.lineWidth || 1,
+        shared: false,
+        peers: [],
+        deleted: false,
+        colors: {},
+        styles: {},
+      }
+      drawingRecs.set(m.drawing, rec)
+    }
+    return rec
+  }
+
+  function paintDrawingRec(rec) {
+    const cv = rec.drawing?.canvas
+    if (!cv) return
+    const { r, k } = scaleFor(cv)
+    const toPage = (px, py) => ({ x: r.left + px / k, y: r.top + py / k })
+    const toCanvas = (x, y) => ({ x: (x - r.left) * k, y: (y - r.top) * k })
+    const b0 = rec.bbox0
+    const corners = [
+      toPage(b0.x, b0.y),
+      toPage(b0.x + b0.w, b0.y),
+      toPage(b0.x + b0.w, b0.y + b0.h),
+      toPage(b0.x, b0.y + b0.h),
+    ]
+    const transformedCorners = corners.map((p) => G.apply(rec.N, p)).map((p) => toCanvas(p.x, p.y))
+    const xs = transformedCorners.map((p) => p.x)
+    const ys = transformedCorners.map((p) => p.y)
+    const minX = Math.min(...xs), maxX = Math.max(...xs)
+    const minY = Math.min(...ys), maxY = Math.max(...ys)
+    const dec = G.decompose(rec.N)
+    const scale = Math.sqrt(Math.abs(dec.sx * dec.sy)) || 1
+    if (rec.lineWidth0) rec.drawing.lineWidth = rec.lineWidth0 * scale
+    const isFullCircle = rec.drawing.arcs?.length === 1 && rec.drawing.arcs[0].full && Math.abs(b0.w - b0.h) < 1.5
+    if (isFullCircle) {
+      const center = toPage(b0.x + b0.w / 2, b0.y + b0.h / 2)
+      const tCenter = G.apply(rec.N, center)
+      const cCenter = toCanvas(tCenter.x, tCenter.y)
+      const r0 = (b0.w + b0.h) / 4
+      const rad = r0 * scale
+      rec.drawing.bbox = { x: cCenter.x - rad, y: cCenter.y - rad, w: rad * 2, h: rad * 2 }
+    } else {
+      rec.drawing.bbox = { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
+    }
+    if (rec.subs0) {
+      rec.drawing.subs = rec.subs0.map((s0) => {
+        const next = []
+        for (let i = 0; i + 1 < s0.length; i += 2) {
+          const pg = toPage(s0[i], s0[i + 1])
+          const tpg = G.apply(rec.N, pg)
+          const c = toCanvas(tpg.x, tpg.y)
+          next.push(c.x, c.y)
+        }
+        return Object.assign(next, { closed: s0.closed })
+      })
+    }
+  }
+
   function paintRec(rec) {
     if (!rec.frame) return
+    if (rec.drawing) {
+      paintDrawingRec(rec)
+      position()
+      return
+    }
     G.paint(rec.el, rec)
     for (const p of rec.shared ? rec.peers : []) {
       p.style.translate = rec.el.style.translate
@@ -942,6 +1039,7 @@ export function createApp(boot, hot) {
   }
 
   function ensureFrame(rec) {
+    if (rec.drawing) return true
     const fr = G.measure(rec.el, rec.svg)
     if (!fr) return false
     rec.frame = fr
@@ -1143,13 +1241,13 @@ export function createApp(boot, hot) {
         gesture = startGesture(start)
       }
       const m = mods(e)
-      gesture.then((g) => g?.move({ x: e.clientX, y: e.clientY }, m))
+      Promise.resolve(gesture).then((g) => g?.move({ x: e.clientX, y: e.clientY }, m))
     }
     const up = (e) => {
       window.removeEventListener('pointermove', move, true)
       window.removeEventListener('pointerup', up, true)
       window.removeEventListener('pointercancel', up, true)
-      if (gesture) gesture.then((g) => g?.end())
+      if (gesture) Promise.resolve(gesture).then((g) => g?.end())
       else if (e.type === 'pointerup') onClick?.(e)
     }
     window.addEventListener('pointermove', move, true)
@@ -1164,7 +1262,7 @@ export function createApp(boot, hot) {
     // what is selected moves when dragged: the second press, after the click that selected it
     trackPointer(
       e,
-      (p) => (state.group ? beginGroupGesture('move', p) : beginGesture('move', p)),
+      (p) => (state.group || state.sel?.canvas ? beginGroupGesture('move', p) : beginGesture('move', p)),
       (ev) => {
         const deep = ev.ctrlKey || ev.metaKey
         // a tap inside a group takes out what it lands on, or adds it when it is not in yet
@@ -1182,16 +1280,20 @@ export function createApp(boot, hot) {
   ui.sel.querySelector('.box').addEventListener('dblclick', (e) => !state.group && editTextAt(e.clientX, e.clientY))
   ui.sel.querySelector('.rot').addEventListener('pointerdown', (e) => {
     e.stopPropagation()
-    trackPointer(e, (p) => beginGesture('rotate', p))
+    trackPointer(e, (p) => (state.group || state.sel?.canvas ? beginGroupGesture('rotate', p) : beginGesture('rotate', p)))
   })
   for (const hd of ui.sel.querySelectorAll('.handle')) {
     hd.addEventListener('pointerdown', (e) => {
       e.stopPropagation()
-      trackPointer(e, (p) => (state.group ? beginGroupGesture('scale', p) : beginGesture('scale', p, hd.dataset.corner)))
+      trackPointer(e, (p) => (state.group || state.sel?.canvas ? beginGroupGesture('scale', p) : beginGesture('scale', p, hd.dataset.corner)))
     })
   }
 
   async function nudge(dx, dy) {
+    if (state.group || state.sel?.canvas) {
+      moveMembers(() => ({ x: dx, y: dy }), 'nudge')
+      return
+    }
     const rec = await canTransform('move')
     if (!rec) return
     const N0 = rec.N
@@ -2486,10 +2588,9 @@ export function createApp(boot, hot) {
     const ms = state.group.members
     const n = ms.length
     const drawn = ms.filter((m) => m.drawing).length
-    // drawings are placed by their script: outlined and traced with the rest, never moved
     const onlyDrawn = drawn === n
     ui.sel.classList.add('group')
-    ui.sel.classList.toggle('readonly', onlyDrawn)
+    ui.sel.classList.toggle('readonly', false)
     ui.sel.classList.toggle('drawing', onlyDrawn)
     ui.sel.classList.remove('shared')
     ui.sel.querySelector('.label').replaceChildren(
@@ -2498,17 +2599,16 @@ export function createApp(boot, hot) {
       h('button', { class: 'unsel', title: 'Unselect all (Esc)', html: `${icon('x', 11)}<span>Unselect all</span>`, onclick: () => unselectAll() }),
     )
     const b = (name, title, fn, cls = '') => btn(name, title, fn, cls)
-    const off = onlyDrawn ? 'off' : ''
     ui.sel.querySelector('.actions').replaceChildren(
-      b('alignL', 'Align left edges', () => alignGroup('left'), off),
-      b('alignC', 'Align centres across', () => alignGroup('center'), off),
-      b('alignR', 'Align right edges', () => alignGroup('right'), off),
-      b('alignT', 'Align top edges', () => alignGroup('top'), off),
-      b('alignM', 'Align middles', () => alignGroup('middle'), off),
-      b('alignB', 'Align bottom edges', () => alignGroup('bottom'), off),
+      b('alignL', 'Align left edges', () => alignGroup('left')),
+      b('alignC', 'Align centres across', () => alignGroup('center')),
+      b('alignR', 'Align right edges', () => alignGroup('right')),
+      b('alignT', 'Align top edges', () => alignGroup('top')),
+      b('alignM', 'Align middles', () => alignGroup('middle')),
+      b('alignB', 'Align bottom edges', () => alignGroup('bottom')),
       h('span', { class: 'sep' }),
-      b('distH', 'Space out evenly across', () => distributeGroup('x'), off),
-      b('distV', 'Space out evenly down', () => distributeGroup('y'), off),
+      b('distH', 'Space out evenly across', () => distributeGroup('x')),
+      b('distV', 'Space out evenly down', () => distributeGroup('y')),
       h('span', { class: 'sep' }),
       b('trash', `Delete all ${n}`, () => removeGroup(), onlyDrawn ? 'danger off' : 'danger'),
     )
@@ -2739,6 +2839,29 @@ export function createApp(boot, hot) {
     }
   }
 
+  function isOffScreen(r) {
+    if (!r || (r.width === 0 && r.height === 0)) return false
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    if (vw <= 0 || vh <= 0) return false
+    return r.bottom <= 0 || r.top >= vh || r.right <= 0 || r.left >= vw
+  }
+
+  function checkOffScreen() {
+    if (state.gesture || state.activeGesture || state.mode !== 'edit') return
+    if (state.group) {
+      const r = groupRect()
+      if (isOffScreen(r)) {
+        unselectAll()
+      }
+    } else if (state.sel) {
+      const r = selRect(state.sel)
+      if (isOffScreen(r)) {
+        deselect()
+      }
+    }
+  }
+
   // Positioned on every event that can move things, and on every frame for
   // things that move by themselves. Not on frames alone: a window that is
   // not being painted delivers none, and the box must still be right when
@@ -2747,6 +2870,7 @@ export function createApp(boot, hot) {
     'scroll',
     () => {
       position()
+      checkOffScreen()
       // guides are drawn in window coordinates: stale the moment the page moves
       if (!state.gesture) {
         guides.clear()
@@ -2758,6 +2882,7 @@ export function createApp(boot, hot) {
   let redrawTimer = 0
   window.addEventListener('resize', () => {
     position()
+    checkOffScreen()
     scheduleHints(220)
     // a resized canvas is cleared; a frozen page would otherwise leave it blank until it plays
     clearTimeout(redrawTimer)
@@ -2933,6 +3058,12 @@ export function createApp(boot, hot) {
     (e) => {
       const mod = e.ctrlKey || e.metaKey
       const k = e.key.toLowerCase()
+      if (mod && !e.shiftKey && k === 'o' && embedded && shell?.openProject) {
+        e.preventDefault()
+        e.stopPropagation()
+        shell.openProject()
+        return
+      }
       if (state.editing) {
         e.stopPropagation()
         if (e.key === 'Escape') {
@@ -3052,31 +3183,44 @@ export function createApp(boot, hot) {
   if (embedded && shell) {
     window.addEventListener('keyup', (e) => e.code === 'Space' && shell.space?.(false), true)
     window.addEventListener('blur', () => shell.space?.(false))
-    // Ctrl+wheel and a trackpad pinch over the page zoom the studio's view, never the browser's.
-    // In Edit mode, zoomed in, a plain wheel moves the VIEW first, across and down, and the page
-    // scrolls itself once the view is at its edge. In View mode the wheel is the site's, always:
-    // it is being used, not edited, and the view still moves by its scrollbars.
-    window.addEventListener(
+  }
+  // A selection box has no scrollable ancestors in the page. Resolve the
+  // scroller underneath it; a frozen scroll-driven canvas needs one redraw.
+  window.addEventListener(
       'wheel',
       (e) => {
+        const path = e.composedPath()
+        const editor = path.includes(ui.host)
+        const overlay = editor && path.some((node) => node.classList?.contains('box') || node.classList?.contains('handle'))
+        if (editor && !overlay) return // panels and the depth rail own their wheel
         if (e.ctrlKey || e.metaKey) {
-          if (!shell.zoomWheel) return
+          if (!shell?.zoomWheel) return
           e.preventDefault()
           e.stopPropagation()
           shell.zoomWheel(e.deltaY, e.deltaMode, e.clientX, e.clientY)
           return
         }
-        if (!shell.panWheel || e.altKey || state.mode !== 'edit') return
+        if (state.mode !== 'edit') return
         // Shift turns a wheel sideways where the browser has not already
         const sideways = e.shiftKey && !e.deltaX
-        if (shell.panWheel(sideways ? e.deltaY : e.deltaX, sideways ? 0 : e.deltaY, e.deltaMode)) {
+        if (!e.altKey && shell?.panWheel?.(sideways ? e.deltaY : e.deltaX, sideways ? 0 : e.deltaY, e.deltaMode)) {
+          e.preventDefault()
+          e.stopPropagation()
+          return
+        }
+        if (scrollWheel(window, e, { exclude: ui.host, frozen: !!boot.isFrozen?.(), overlay, redraw: () => {
+          if (boot.isFrozen?.()) boot.step?.(0)
+          drawings.time = null
+          position()
+          checkOffScreen()
+          emit()
+        } })) {
           e.preventDefault()
           e.stopPropagation()
         }
       },
       { capture: true, passive: false },
     )
-  }
 
   window.addEventListener('beforeunload', (e) => {
     if (pending().length) {
@@ -3316,6 +3460,34 @@ export function createApp(boot, hot) {
   const boxOf = (a, b) => ({ left: Math.min(a.x, b.x), top: Math.min(a.y, b.y), width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y), right: Math.max(a.x, b.x), bottom: Math.max(a.y, b.y) })
   const within = (p, r) => p.left >= r.left - 1 && p.right <= r.right + 1 && p.top >= r.top - 1 && p.bottom <= r.bottom + 1
 
+  function drawingInBox(it, r) {
+    const pr = pageRect(it)
+    if (within(pr, r)) return true
+    if (it.kind === 'stroke' || it.kind === 'strokeText') {
+      const tol = Math.max(6, (it.lineWidth || 1) + 4)
+      if (pr.left >= r.left - tol && pr.right <= r.right + tol && pr.top >= r.top - tol && pr.bottom <= r.bottom + tol) {
+        return true
+      }
+      if (it.subs && it.subs.length) {
+        const { r: cr, k } = scaleFor(it.canvas)
+        let allIn = true
+        for (const sub of it.subs) {
+          for (let i = 0; i + 1 < sub.length; i += 2) {
+            const x = cr.left + sub[i] / k
+            const y = cr.top + sub[i + 1] / k
+            if (x < r.left - 4 || x > r.right + 4 || y < r.top - 4 || y > r.bottom + 4) {
+              allIn = false
+              break
+            }
+          }
+          if (!allIn) break
+        }
+        if (allIn) return true
+      }
+    }
+    return false
+  }
+
   /** The drawings on every canvas the box covers, wholly inside it; the canvas's own ground never. */
   function drawingsInBox(r, frames) {
     const out = []
@@ -3325,7 +3497,7 @@ export function createApp(boot, hot) {
       if (cr.right < r.left || cr.left > r.right || cr.bottom < r.top || cr.top > r.bottom) continue
       for (const it of items) {
         if (groundOf(it) || it.alpha < 0.03) continue
-        if (within(pageRect(it), r)) out.push(it)
+        if (drawingInBox(it, r)) out.push(it)
         if (out.length >= 120) return out
       }
     }
@@ -3393,13 +3565,102 @@ export function createApp(boot, hot) {
     return true
   }
 
-  const groupRect = () => unionBox(state.group.members.map(memberRect))
+  const activeCleanCanvases = new Map()
+
+  function getCleanCanvases(drawingsList) {
+    if (!drawingsList.length) return new Map()
+    const canvasesNeeded = new Set(drawingsList.map((d) => d.canvas).filter(Boolean))
+    const result = new Map()
+    const captureList = []
+
+    for (const cv of canvasesNeeded) {
+      const entry = activeCleanCanvases.get(cv)
+      const onCanvas = drawingsList.filter((d) => d.canvas === cv)
+      if (entry && onCanvas.every((d) => entry.items?.has(d))) {
+        result.set(cv, entry.clean)
+      } else {
+        const allOnCanvas = new Set(onCanvas)
+        for (const [d, rec] of drawingRecs) {
+          if (d.canvas === cv && !G.isIdentity(rec.N)) allOnCanvas.add(d)
+        }
+        for (const d of allOnCanvas) {
+          const rec = drawingRecs.get(d)
+          captureList.push(rec?.bbox0 ? { ...d, bbox: rec.bbox0 } : d)
+        }
+      }
+    }
+
+    if (captureList.length) {
+      const captured = recorder.captureCleanCanvases(captureList)
+      for (const [cv, clean] of captured) {
+        result.set(cv, clean)
+        const skipped = new Set(captureList.filter((it) => it.canvas === cv))
+        activeCleanCanvases.set(cv, { clean, items: skipped })
+      }
+    }
+
+    return result
+  }
+
+  function repaintCanvasDrawings(recsList, cleanCanvases = null) {
+    const drawingRecsList = recsList.filter((r) => r.drawing)
+    if (!drawingRecsList.length && !drawingRecs.size) return
+    const canvases = cleanCanvases || (activeCleanCanvases.size ? new Map([...activeCleanCanvases].map(([k, v]) => [k, v.clean])) : null) || getCleanCanvases(drawingRecsList.map((r) => r.drawing))
+    for (const [cv, clean] of canvases) {
+      const ctx = cv.getContext('2d')
+      ctx.save()
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.clearRect(0, 0, cv.width, cv.height)
+      ctx.drawImage(clean, 0, 0)
+      const rendered = new Set()
+      for (const r of drawingRecsList) {
+        if (r.drawing?.canvas === cv) {
+          renderDrawing(ctx, r.drawing)
+          rendered.add(r.drawing)
+        }
+      }
+      for (const [d, r] of drawingRecs) {
+        if (d.canvas === cv && !rendered.has(d) && !G.isIdentity(r.N)) {
+          renderDrawing(ctx, r.drawing)
+          rendered.add(d)
+        }
+      }
+      ctx.restore()
+    }
+  }
+
+  function refreshCanvasDrawings() {
+    if (boot.rec) return
+    const transformed = [...drawingRecs.values()].filter((r) => r.drawing && !G.isIdentity(r.N))
+    if (!transformed.length || !activeCleanCanvases.size) return
+    const cleanMap = new Map()
+    for (const [cv, entry] of activeCleanCanvases) cleanMap.set(cv, entry.clean)
+    repaintCanvasDrawings(transformed, cleanMap)
+  }
+
+  const origStep = boot.step
+  if (typeof origStep === 'function') {
+    boot.step = (ms) => {
+      const res = origStep(ms)
+      refreshCanvasDrawings()
+      return res
+    }
+  }
+
+  const groupRect = () => {
+    const ms = state.group?.members ?? (state.sel?.canvas ? [drawingMember(state.sel.canvas.item)] : [])
+    return ms.length ? unionBox(ms.map(memberRect)) : { left: 0, top: 0, width: 0, height: 0, cx: 0, cy: 0, right: 0, bottom: 0 }
+  }
 
   /** The members that can move, each with its record and frame ready; the rest are named, not moved. */
   function movable(members) {
     const ready = []
     const stuck = []
     for (const m of members) {
+      if (m.drawing) {
+        ready.push(drawingRecFor(m))
+        continue
+      }
       if (m.info?.readonly) {
         stuck.push(m)
         continue
@@ -3420,39 +3681,54 @@ export function createApp(boot, hot) {
   }
 
   /** One history step for a change to many: each record from where it was to where it is. */
-  function pushGroup(recsList, before, label) {
+  function pushGroup(recsList, before, label, cleanCanvases = null) {
     const after = recsList.map((r) => r.N)
+    const drawingRecsList = recsList.filter((r) => r.drawing)
+    const canvases = cleanCanvases || (drawingRecsList.length ? getCleanCanvases(drawingRecsList.map((r) => r.drawing)) : null)
+    if (canvases) {
+      for (const [cv, clean] of canvases) {
+        const existing = activeCleanCanvases.get(cv)
+        const items = existing?.items ? new Set(existing.items) : new Set()
+        for (const r of drawingRecsList) items.add(r.drawing)
+        activeCleanCanvases.set(cv, { clean, items })
+      }
+    }
     history.push({
       kind: 'group',
       label,
-      undo: () => recsList.forEach((r, i) => ((r.N = before[i]), paintRec(r))),
-      redo: () => recsList.forEach((r, i) => ((r.N = after[i]), paintRec(r))),
+      undo: () => {
+        recsList.forEach((r, i) => ((r.N = before[i]), paintRec(r)))
+        if (drawingRecsList.length) repaintCanvasDrawings(recsList, canvases)
+      },
+      redo: () => {
+        recsList.forEach((r, i) => ((r.N = after[i]), paintRec(r)))
+        if (drawingRecsList.length) repaintCanvasDrawings(recsList, canvases)
+      },
     })
     renderBar()
     renderInspector()
   }
 
-  /** Move or resize a group by dragging; returns { move, end, cancel } like a single gesture. */
+  /** Move, rotate or resize a group by dragging; returns { move, end, cancel } like a single gesture. */
   async function beginGroupGesture(kind, start) {
-    if (!state.group) return null
-    const { ready, stuck } = movable(state.group.members)
+    const members = state.group ? state.group.members : state.sel?.canvas ? [drawingMember(state.sel.canvas.item)] : null
+    if (!members || !members.length) return null
+    const { ready, stuck } = movable(members)
     if (!ready.length) {
-      toast(
-        stuck.every((m) => m.drawing)
-          ? 'Drawings on a canvas are placed by the script that draws them, so they cannot be dragged. Their colours and that code are in Properties.'
-          : 'None of these can be moved: they are drawn several times from one line, or made by a script.',
-        'warn',
-        5500,
-      )
+      toast('None of these can be moved: they are drawn several times from one line, or made by a script.', 'warn', 5500)
       return null
     }
-    if (stuck.length) toast(`${stuck.length} of these cannot move with the rest: drawn on a canvas or several times from one line, or made by a script.`, 'warn', 4500)
+    if (stuck.length) toast(`${stuck.length} of these cannot move with the rest: drawn several times from one line, or made by a script.`, 'warn', 4500)
+    const drawingRecsList = ready.filter((r) => r.drawing)
+    const cleanCanvases = drawingRecsList.length ? getCleanCanvases(drawingRecsList.map((r) => r.drawing)) : new Map()
+    if (drawingRecsList.length) repaintCanvasDrawings(ready, cleanCanvases)
     const N0 = ready.map((r) => r.N)
     const c0s = ready.map((r) => centreOnScreen(r))
     const cf = ready.map((r) => G.apply(r.N, r.c0))
     const me0 = groupRect()
     const gc = { x: me0.cx, y: me0.cy }
     const d0 = Math.max(4, Math.hypot(start.x - gc.x, start.y - gc.y))
+    const theta0 = Math.atan2(start.y - gc.y, start.x - gc.x)
     let targets = kind === 'move' ? collectGroupTargets(ready.map((r) => r.el), { host: ui.host, isLocked }).targets : []
     let settled = false
     let changed = false
@@ -3485,6 +3761,24 @@ export function createApp(boot, hot) {
           })
           guides.draw(s.guides)
           readout(`${G.num(s.d.x, 1)}, ${G.num(s.d.y, 1)}  ${ready.length} items${s.snapped?.x || s.snapped?.y ? '  snapped' : ''}`, p.x, p.y)
+        } else if (kind === 'rotate') {
+          const a = Math.atan2(p.y - gc.y, p.x - gc.x)
+          let dt = ((a - theta0) * 180) / Math.PI
+          let snapped = false
+          if (m.shift) dt = Math.round(dt / 15) * 15
+          else ({ theta: dt, snapped } = snapAngle(dt, { off }))
+          const rad = (dt * Math.PI) / 180
+          const cos = Math.cos(rad)
+          const sin = Math.sin(rad)
+          ready.forEach((r, i) => {
+            const vx = c0s[i].x - gc.x
+            const vy = c0s[i].y - gc.y
+            const rx = vx * cos - vy * sin
+            const ry = vx * sin + vy * cos
+            const d = G.vecToFrame(r.frame, { x: rx - vx, y: ry - vy })
+            r.N = G.mul(G.T(d.x, d.y), G.mul(G.about(cf[i], G.R(dt * flipSign(r))), N0[i]))
+          })
+          readout(`${G.num(dt, 1)} deg  ${ready.length} items, spacing kept${snapped ? '  snapped' : ''}`, p.x, p.y)
         } else {
           let k = Math.max(0.05, Math.min(20, Math.hypot(p.x - gc.x, p.y - gc.y) / d0))
           if (m.shift) k = Math.round(k * 20) / 20
@@ -3497,17 +3791,23 @@ export function createApp(boot, hot) {
         }
         changed = true
         ready.forEach(paintRec)
+        if (drawingRecsList.length) repaintCanvasDrawings(drawingRecsList, cleanCanvases)
       },
       cancel() {
         if (cancelled) return
         cancelled = true
         ready.forEach((r, i) => ((r.N = N0[i]), paintRec(r)))
+        if (drawingRecsList.length) repaintCanvasDrawings(drawingRecsList, cleanCanvases)
         finish()
       },
       end() {
         if (cancelled) return
         finish()
-        if (changed) pushGroup(ready, N0, `${kind === 'move' ? 'move' : 'resize'} ${ready.length} items`)
+        if (changed) {
+          const lbl = ready.length === 1 ? `${kind} ${ready[0].unitLabel}` : `${kind === 'move' ? 'move' : kind === 'rotate' ? 'rotate' : 'resize'} ${ready.length} items`
+          pushGroup(ready, N0, lbl, cleanCanvases)
+          if (drawingRecsList.length) repaintCanvasDrawings(drawingRecsList, cleanCanvases)
+        }
       },
     }
     state.activeGesture = g
@@ -3516,18 +3816,25 @@ export function createApp(boot, hot) {
 
   /** Move every member by its own amount on screen: alignment, distribution, nudges. */
   function moveMembers(deltas, label) {
-    const { ready, stuck } = movable(state.group?.members ?? [])
+    const members = state.group ? state.group.members : state.sel?.canvas ? [drawingMember(state.sel.canvas.item)] : []
+    const { ready, stuck } = movable(members)
     if (!ready.length) return toast('None of these can be moved.', 'warn')
     if (stuck.length) toast(`${stuck.length} of these stay where they are: they cannot move on their own.`, 'warn', 4000)
+    const drawingRecsList = ready.filter((r) => r.drawing)
+    const cleanCanvases = drawingRecsList.length ? getCleanCanvases(drawingRecsList.map((r) => r.drawing)) : new Map()
     const before = ready.map((r) => r.N)
     ready.forEach((r) => {
-      const dv = deltas(r.el.getBoundingClientRect(), r)
+      const rect = r.drawing ? pageRect(r.drawing) : r.el.getBoundingClientRect()
+      const dv = deltas(rect, r)
       if (!dv || (!dv.x && !dv.y)) return
       const d = G.vecToFrame(r.frame, dv)
       r.N = G.mul(G.T(d.x, d.y), r.N)
       paintRec(r)
     })
-    pushGroup(ready, before, label)
+    if (drawingRecsList.length) {
+      repaintCanvasDrawings(drawingRecsList, cleanCanvases)
+    }
+    pushGroup(ready, before, label, cleanCanvases)
   }
 
   function alignGroup(edge) {
@@ -3548,7 +3855,7 @@ export function createApp(boot, hot) {
   function distributeGroup(axis) {
     if (!state.group || state.group.members.length < 3) return toast('Spacing out takes three or more.', 'info', 2500)
     const h = axis === 'x'
-    const rects = state.group.members.filter((m) => !m.drawing).map((m) => ({ el: m.el, r: m.el.getBoundingClientRect() }))
+    const rects = state.group.members.map((m) => ({ el: m.el, m, r: memberRect(m) }))
     if (rects.length < 3) return toast('Spacing out takes three or more that can move.', 'info', 2500)
     rects.sort((a, b) => (h ? a.r.left - b.r.left : a.r.top - b.r.top))
     const first = rects[0].r
@@ -3559,10 +3866,13 @@ export function createApp(boot, hot) {
     const want = new Map()
     let at = h ? first.left : first.top
     for (const x of rects) {
-      want.set(x.el, at - (h ? x.r.left : x.r.top))
+      want.set(x.m, at - (h ? x.r.left : x.r.top))
       at += (h ? x.r.width : x.r.height) + gap
     }
-    moveMembers((r, rec) => (h ? { x: want.get(rec.el) ?? 0, y: 0 } : { x: 0, y: want.get(rec.el) ?? 0 }), `space out ${h ? 'across' : 'down'}`)
+    moveMembers((r, rec) => {
+      const d = want.get(rec.member ?? rec) ?? 0
+      return h ? { x: d, y: 0 } : { x: 0, y: d }
+    }, `space out ${h ? 'across' : 'down'}`)
   }
 
   /** Resize the whole group by a percentage, spacing included, as a corner drag would. */
@@ -3572,6 +3882,8 @@ export function createApp(boot, hot) {
     if (!(k > 0)) return
     const { ready } = movable(state.group.members)
     if (!ready.length) return
+    const drawingRecsList = ready.filter((r) => r.drawing)
+    const cleanCanvases = drawingRecsList.length ? getCleanCanvases(drawingRecsList.map((r) => r.drawing)) : new Map()
     const g = groupRect()
     const before = ready.map((r) => r.N)
     ready.forEach((r) => {
@@ -3581,7 +3893,10 @@ export function createApp(boot, hot) {
       r.N = G.mul(G.T(d.x, d.y), G.mul(G.about(cf, G.S(k)), r.N))
       paintRec(r)
     })
-    pushGroup(ready, before, `resize ${ready.length} items to ${pct}%`)
+    if (drawingRecsList.length) {
+      repaintCanvasDrawings(drawingRecsList, cleanCanvases)
+    }
+    pushGroup(ready, before, `resize ${ready.length} items to ${pct}%`, cleanCanvases)
   }
 
   async function removeGroup() {
@@ -4412,6 +4727,21 @@ export function createApp(boot, hot) {
   let capturing = null
   let canvasSeq = 0
 
+  function syncTransformedFrames(frames) {
+    if (!frames || !drawingRecs.size) return
+    for (const [cv, list] of frames) {
+      for (const [d, rec] of drawingRecs) {
+        if (d.canvas !== cv || G.isIdentity(rec.N)) continue
+        const idx = list.findIndex((it) => it === d || (rec.bbox0 && it.kind === d.kind && Math.abs(it.bbox.x - rec.bbox0.x) < 2 && Math.abs(it.bbox.y - rec.bbox0.y) < 2))
+        if (idx >= 0) {
+          list[idx] = rec.drawing
+        } else {
+          list.push(rec.drawing)
+        }
+      }
+    }
+  }
+
   /** What every canvas drew in its latest frame: recorded again once it may have moved on. */
   async function drawingsNow({ stacks = false, fresh = false } = {}) {
     const frozen = !!boot.isFrozen?.()
@@ -4420,8 +4750,10 @@ export function createApp(boot, hot) {
     if (!stale) return drawings.frames
     if (!capturing) {
       capturing = recorder.capture({ stacks }).then((frames) => {
+        syncTransformedFrames(frames)
         drawings = { at: Date.now(), frames, stacks, time: boot.time?.() }
         capturing = null
+        refreshCanvasDrawings()
         return frames
       })
     }
@@ -5117,6 +5449,7 @@ export function createApp(boot, hot) {
       const inv = 1 / Math.max(0.05, k || 1)
       ui.root.style.setProperty('--inv', String(inv))
     },
+    group: () => state.group,
     alignGroup,
     distributeGroup,
     scaleGroup,
@@ -5192,7 +5525,8 @@ export function createApp(boot, hot) {
       renderInspector()
     },
     /** For probes and agents: the last recording, and a fresh one. */
-    debug: { drawings: () => drawings, capture: (o) => recorder.capture(o), itemsAt, resolveHit: (x, y) => resolveHit(pageStack(x, y), x, y) },
+    debug: { drawings: () => drawings, capture: (o) => recorder.capture(o), itemsAt, resolveHit: (x, y) => resolveHit(pageStack(x, y), x, y), beginGroupGesture: (p, kind) => beginGroupGesture(kind, p) },
+    importProbe: () => probeImport({ unitFor, fiberOf, isLocked, locatorOf, record: (o) => recorder.capture(o), boot }),
     toggleGroup: () => {
       if (!state.sel?.canvas) return
       state.sel.canvas.showGroup = !state.sel.canvas.showGroup
@@ -5200,7 +5534,18 @@ export function createApp(boot, hot) {
       renderInspector()
     },
     // the page's clock, for the timeline
-    time: () => boot.time?.() ?? 0,
+    time: () => timeline.clock(),
+    timeline: () => timeline.state(),
+    setTimelineMode: (kind) => timeline.setMode(kind),
+    beginScrub: () => timeline.begin(),
+    previewScrub: (position) => timeline.preview(position),
+    endScrub: (commit) => {
+      timeline.end(commit)
+      store.set('frozen', boot.isFrozen?.() ? '1' : '0')
+      position()
+      renderInspector()
+    },
+    snapshotInto: (frame) => paintSnapshot(window, frame, ui.host),
     seekBy: (ms) => {
       boot.step?.(ms)
       drawings.time = null

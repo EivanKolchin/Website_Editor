@@ -113,7 +113,14 @@ result straight away.
 
 **Animations, frame by frame.** A timeline freezes, plays, slows (to a half,
 a quarter or a tenth) and steps the page a frame forward or back, and scrubs
-it by dragging. CSS animations appear as keyframe tracks: click a keyframe,
+it by dragging. The red playhead moves across the whole track: a window above
+it previews the proposed state, and releasing applies it to the main view.
+Esc cancels. Scroll over the track or use its arrow keys, Home and End to seek.
+**Page** covers the full scroll range of the selected scene (including scripted
+scrollers); **Time** covers clock-driven animation. Switch with the button
+beside the track. In Edit mode, scrolling over a selected or frozen scene still
+moves its scroller and redraws it without unfreezing the clock.
+CSS animations appear as keyframe tracks: click a keyframe,
 change its values, see it at once, save it into the `@keyframes` where it
 lives.
 
@@ -162,9 +169,45 @@ next to yours), opens the **studio** - your page in the middle, Layers on the
 left, Properties on the right - and stops when you close the window.
 `--page` opens the page alone, with the editor floating over it.
 
-With no configuration it finds `vite.config.*` in the folder above and works
-on every `.jsx` / `.tsx` file. Most projects want a few minutes of wiring:
-see [Setting it up in a project](#setting-it-up-in-a-project).
+With no attached configuration, Retouch opens its welcome window. This runs
+without a website or Vite installation. You can also open it at any time:
+`node retouch/bin/retouch.mjs setup`.
+On subsequent launches, a verified project saved by setup is reopened when
+no explicit configuration is attached. Unavailable folders return to setup.
+
+In the studio, **File → Import project** (Ctrl+O) opens another local website.
+Choose its source folder with Browse, or paste the full path. The same setup
+window offers three ways to connect it:
+
+- **Use an API key:** choose Gemini, Claude, OpenAI, DeepSeek or Z.ai, enter
+  your key and adjust the model ID if needed. Z.ai also supports its Coding
+  Plan endpoint. The provider reads sources using bounded read-only tools
+  and proposes config data. Live activity shows the files being read and
+  validation steps. The key stays in memory for this run; it is never saved
+  in project wiring, recents or activity. Project source goes to the chosen
+  provider, and its normal API charges apply. No extra SDK is needed.
+- **Coding agent:** copy the customised prompt with both repository paths,
+  the wiring documentation and verification requirements. Give your agent
+  access to both repos; when it has written `retouch.config.mjs`, return and
+  choose **Verify and open**.
+- **Existing config:** use `retouch.config.mjs`, saved wiring, or a custom
+  config path. Simple projects can be inferred without an API key.
+
+Wiring is stored in Retouch's gitignored `local/projects/` library. Assisted
+setup preserves the chosen dev script's Vite config, mode and preparation
+commands; it accepts only config data, never executable model output.
+Projects needing custom launchers, executable rule functions or generator
+source changes use the coding-agent path. The optional dev-script setting
+chooses the right app when a repository contains several websites.
+
+The import screen shows actual completed stages: dependencies, wiring,
+preparation, preview startup, source checks and rendered-page verification.
+It runs the project's configured check and tests representative text,
+movement, sizing and markup edits in memory without writing website source.
+Canvas drawing stacks are traced when the page redraws during loading.
+Failures stop the import with a specific explanation; any checks that could
+not run appear in project notes. Imported projects appear in File's recent
+projects list, beside Save, Reload and Project details.
 
 > Add `retouch/` to your project's `.gitignore`. Retouch is its own
 > repository; your project should not track it.
@@ -250,7 +293,8 @@ components are placed by their props, where text and colours live outside
 the code the page imports (`.html` markup, token files, scene scripts),
 which files are generated and what generates them, your project's own check
 command, and any house rules. `retouch.config.example.mjs` documents every
-field. Three ways to write it:
+field. The welcome window and **File → Import project** provide API-assisted
+setup and a copyable coding-agent prompt. For the command line:
 
 1. **By hand**, from the example.
 2. **With your coding agent.** Paste:

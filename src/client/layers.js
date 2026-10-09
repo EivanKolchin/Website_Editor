@@ -7,7 +7,7 @@ import { h, icon } from './ui.js'
  * Built from the page's live DOM and only as deep as it is opened, because
  * a real page has thousands of elements. Each row says what kind of thing
  * it is (a component, text, an image, a drawing surface, a box); a blue dot
- * is written in JSX, a violet one came from markup set as a string or a
+ * is written in JSX, a teal one came from markup set as a string or a
  * script. A canvas opens into its DRAWINGS, grouped by the line of code
  * that drew them - the one way to reach a star two pixels wide. The eye
  * hides an element for a moment to see past it: a view, never an edit.
@@ -18,30 +18,30 @@ const SKIP = /^(SCRIPT|STYLE|LINK|META|NOSCRIPT|TEMPLATE|HEAD|TITLE|RETOUCH-EDIT
 export const LAYERS_CSS = `
 .layers { display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .layers .lsearch { padding: 8px 8px 6px; }
-.layers .lsearch input { width: 100%; box-sizing: border-box; height: 28px; padding: 0 9px; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.07); color: #ededf2; font: inherit; outline: none; }
-.layers .lsearch input:focus { border-color: #4c8dff; box-shadow: 0 0 0 3px rgba(76,141,255,0.15); }
+.layers .lsearch input { width: 100%; box-sizing: border-box; height: 28px; padding: 0 9px; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.07); color: var(--ink); font: inherit; outline: none; }
+.layers .lsearch input:focus { border-color: var(--acc); box-shadow: 0 0 0 3px rgba(var(--acc-rgb),0.15); }
 .layers .tree { flex: 1; overflow: auto; padding: 2px 4px 24px; overscroll-behavior: contain; }
 .layers .ln { display: flex; align-items: center; gap: 5px; height: 26px; padding-right: 6px; cursor: default; white-space: nowrap; font-size: 12px; border-radius: 7px; position: relative; }
 .layers .ln:hover { background: rgba(255,255,255,0.045); }
-.layers .ln.on { background: rgba(76,141,255,0.18); }
+.layers .ln.on { background: rgba(var(--acc-rgb),0.18); }
 .layers .ln.on .nm { color: #fff; }
-.layers .ln .tw { width: 16px; height: 16px; min-width: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: #5c5c66; border-radius: 4px; background: none; border: 0; cursor: pointer; }
-.layers .ln .tw:hover { color: #ededf2; background: rgba(255,255,255,0.08); }
+.layers .ln .tw { width: 16px; height: 16px; min-width: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--faint); border-radius: 4px; background: none; border: 0; cursor: pointer; }
+.layers .ln .tw:hover { color: var(--ink); background: rgba(255,255,255,0.08); }
 .layers .ln .tw.shut svg { transform: rotate(-90deg); }
 .layers .ln .tw.leaf { visibility: hidden; }
-.layers .ln .ic { width: 16px; height: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; color: #8e8e9a; position: relative; }
-.layers .ln .ic.jsx { color: #7aa7ff; }
-.layers .ln .ic.str { color: #b5a4ff; }
-.layers .ln .ic.draw { color: #5eead4; }
-.layers .ln .nm { overflow: hidden; text-overflow: ellipsis; color: #d4d4d8; }
-.layers .ln .nm b { font-weight: 650; color: #ededf2; }
-.layers .ln .tx { color: #5c5c66; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
-.layers .ln .eye { margin-left: auto; width: 22px; height: 22px; min-width: 22px; padding: 0; opacity: 0; color: #8e8e9a; background: none; border: 0; border-radius: 5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.layers .ln .ic { width: 16px; height: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; color: var(--mut); position: relative; }
+.layers .ln .ic.jsx { color: var(--acc); }
+.layers .ln .ic.str { color: var(--source); }
+.layers .ln .ic.draw { color: var(--source); }
+.layers .ln .nm { overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.layers .ln .nm b { font-weight: 650; color: var(--ink); }
+.layers .ln .tx { color: var(--faint); overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.layers .ln .eye { margin-left: auto; width: 22px; height: 22px; min-width: 22px; padding: 0; opacity: 0; color: var(--mut); background: none; border: 0; border-radius: 5px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .layers .ln:hover .eye, .layers .ln .eye.off { opacity: 1; }
-.layers .ln .eye:hover { background: rgba(255,255,255,0.08); color: #ededf2; }
+.layers .ln .eye:hover { background: rgba(255,255,255,0.08); color: var(--ink); }
 .layers .ln.hid .nm, .layers .ln.hid .tx, .layers .ln.hid .ic { opacity: 0.4; }
-.layers .ln.draw .nm { color: #a7f3e6; }
-.layers .lempty { padding: 14px 12px; color: #8e8e9a; font-size: 12px; line-height: 1.5; }
+.layers .ln.draw .nm { color: var(--source); }
+.layers .lempty { padding: 14px 12px; color: var(--mut); font-size: 12px; line-height: 1.5; }
 `
 
 const GLYPHS = {

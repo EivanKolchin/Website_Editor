@@ -50,6 +50,9 @@ export class Project {
     if (!isUnder(this.root, f)) return false
     // Retouch itself may sit inside the project it edits; its own files are not the project's
     if (isUnder(TOOL_DIR, f)) return false
+    // A custom Vite cache may sit outside node_modules. It is compiled
+    // dependency output, never an editable source or a text candidate.
+    if (this.server?.config?.cacheDir && isUnder(this.server.config.cacheDir, f)) return false
     const rel = relTo(this.root, f)
     return !/(^|\/)(node_modules|\.git)(\/|$)/.test(rel)
   }

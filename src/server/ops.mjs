@@ -9,6 +9,7 @@ import { formatLike, kindOf, parseColorLiteral, parseOklchArray } from './colors
 import { removeElementSplice, styleAttributeSplice } from './html.mjs'
 import { htmlInsertSplice, htmlSnippet, jsxInsertSplice, jsxSnippet, newElementMarkup, writtenClass } from './insert.mjs'
 import { lineCol, posix, RetouchError, relTo } from './util.mjs'
+import { createDrawingEdits } from './drawings.mjs'
 
 /**
  * WHAT CAN BE DONE TO AN ELEMENT, AND THEN DOING IT.
@@ -32,6 +33,7 @@ const SVG_BUILTIN = {
 const SVG_DEFAULT_ZERO = new Set(['x', 'y', 'cx', 'cy'])
 
 export function createOps({ project, sources, config, tracer = null }) {
+  const drawings = createDrawingEdits({ project, sources, tracer })
   const adapters = (config.adapters ?? []).map((ad) => ({ ...ad, names: [].concat(ad.component ?? []) }))
   const isHtml = (stamp) => typeof stamp === 'string' && stamp.startsWith('html:')
 
@@ -453,7 +455,9 @@ export function createOps({ project, sources, config, tracer = null }) {
       const op = ops[i]
       const tag = (list) => list.map((s) => ({ ...s, op: i }))
       try {
-        if (op.kind === 'text') {
+        if (op.kind === 'drawing-transform') {
+          splices.push(...tag(drawings.plan(op)))
+        } else if (op.kind === 'text') {
           const picked = pickCandidate(op, textCandidates(op))
           if (picked.status === 'ambiguous') throw new RetouchError('That text appears in more than one place; pick one first.', { code: 'ambiguous', candidates: picked.candidates })
           if (picked.status !== 'ok') throw new RetouchError('Could not find that text in the source any more.', { code: 'missing' })
@@ -588,5 +592,5 @@ export function createOps({ project, sources, config, tracer = null }) {
     return list.slice(0, 6).map(candidateInfo)
   }
 
-  return { inspect, resolveText, plan, locate, findText }
+  return { inspect, resolveText, plan, locate, findText, inspectDrawing: drawings.inspect }
 }

@@ -122,9 +122,10 @@ export function stampSource(code, file, prefix, { skip = new Set() } = {}) {
       name = `__rt${fn.start}`
       if (ps.length === 1) {
         const p = ps[0]
-        let k = p.start - 1
-        while (k >= 0 && /\s/.test(code[k])) k--
-        if (code[k] === '(') edits.push({ at: p.end, text: `, ${name}` })
+        // The '(' in .map(item => ...) belongs to the CALL, not the
+        // callback's parameters. Only look inside the callback's range.
+        const prefix = code.slice(fn.start, p.start).trimEnd()
+        if (prefix.endsWith('(')) edits.push({ at: p.end, text: `, ${name}` })
         else {
           edits.push({ at: p.start, text: '(' })
           edits.push({ at: p.end, text: `, ${name})` })
