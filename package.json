@@ -1,6 +1,7 @@
 {
   "name": "retouch",
   "version": "0.1.0",
+  "license": "SEE LICENSE IN LICENSE",
   "description": "Edit a running Vite + React site in place - text, position, size, rotation, colour, deletion - and save the changes back to the source code. No AI in the edit path.",
   "type": "module",
   "bin": {
@@ -26,6 +27,7 @@
     "bin",
     "src",
     "AGENTS.md",
+    "LICENSE",
     "README.md",
     "Retouch.cmd",
     "retouch.sh",

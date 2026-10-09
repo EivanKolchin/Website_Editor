@@ -14,6 +14,10 @@ written by rules you can read, the same way every time.
 Works with **Vite + React** projects (React 18 or 19), on Windows, macOS and
 Linux.
 
+**Free to use, including for commercial projects and paid client work.**
+Selling or offering Retouch itself as a paid product or service requires the
+author's explicit written permission. See [Licence](#licence).
+
 ---
 
 ## Why Retouch exists
@@ -472,9 +476,28 @@ opening the pull request.
 
 ### Licence
 
-No licence has been chosen yet. Until one is added, please open an issue
-before contributing code, so everything can be released under the same
-terms.
+Retouch uses the [Retouch Free Use License 1.0](LICENSE), a custom
+source-available licence.
+
+- **Free use:** download, use, inspect, modify and share Retouch for personal
+  projects, business use and paid client work, subject to the licence.
+- **Your work stays yours:** websites and software created or edited with
+  Retouch can be sold and licensed on your own terms. Merely using Retouch
+  does not apply its licence to your project.
+- **Permission required:** selling Retouch or a fork, providing paid hosted
+  access, embedding it in a paid product or bundle, or monetizing access to
+  its functionality requires Eivan Kolchin Rivas's prior explicit written
+  permission. Rebranding it does not remove this requirement.
+- **Keep the notices:** redistributed copies must include the licence and
+  copyright notices, and modified versions must be identified as modified.
+
+To request commercial permission, [open an issue](https://github.com/EivanKolchin/Website_Editor/issues/new)
+describing the proposed offering. Permission must be granted explicitly in
+writing before you offer it.
+
+This is a source-available project. The commercial-offering restriction means
+it is not licensed under MIT, Apache 2.0 or an OSI-approved open-source licence.
+The full [LICENSE](LICENSE) governs; this section is a summary.
 
 
 https://github.com/user-attachments/assets/6f003c62-0e0f-4286-b578-7fd7d4c93536

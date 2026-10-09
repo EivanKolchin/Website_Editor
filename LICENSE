@@ -1,0 +1,88 @@
+Retouch Free Use License 1.0
+
+Copyright (c) 2026 Eivan Kolchin Rivas
+
+1. Scope
+
+"Licensor" means Eivan Kolchin Rivas, the maintainer identified at
+https://github.com/EivanKolchin.
+
+"Software" means Retouch's source code, executable forms and accompanying
+documentation, including modifications and works incorporating a substantial
+portion of that code. This license applies only to rights the Licensor can
+grant. Separately licensed third-party components keep their own licenses.
+
+2. Free permissions
+
+Subject to these terms, the Licensor grants you a worldwide, non-exclusive,
+royalty-free copyright license to use, run, study, copy, modify and distribute
+the Software. These permissions include personal use, business use and paid
+client work, except for the Commercial Offerings reserved in section 3.
+
+You may use the Software to create, edit and sell your own applications,
+websites and other work without requesting permission or paying the Licensor.
+Section 5 explains the distinction between that work and the Software itself.
+
+3. Commercial Offerings require permission
+
+Without the Licensor's prior explicit written permission, you may not make
+the Software, a modified version, or its functionality available to others
+as a Commercial Offering. This includes:
+
+  a. Selling, licensing, renting or otherwise charging for copies or access.
+  b. Offering it as a paid or subscription-based hosted service.
+  c. Including it as a component or feature of a paid product, service,
+     membership or bundle, even if you describe that component as free.
+  d. Monetizing access to it or its functionality through advertising,
+     sponsorship or other consideration tied to providing the Software.
+
+These restrictions apply equally to original, modified, forked, rebranded and
+embedded versions. Providing the Software free of charge is permitted when
+it is not a Commercial Offering. Voluntary donations that are not required
+for access or functionality do not by themselves make it a Commercial Offering.
+
+Charging for work you create or edit using the Software is permitted. Using
+Retouch as an internal tool for a business or to deliver client work does not
+by itself make that work a Commercial Offering of Retouch.
+
+4. Copies and modifications
+
+When distributing the Software or a substantial portion of it, include this
+license and preserve its copyright notices. Clearly identify modified
+versions as modified. You must not remove or replace these terms for the
+Licensor's code or grant recipients rights to that code beyond these terms.
+Recipients receive their permissions directly under this license.
+
+5. Your projects and output
+
+Applications, websites, source files and other work created or edited with
+Retouch are not covered by this license merely because Retouch was used.
+You may license, distribute and sell that work on your own terms, subject to
+any other applicable rights. If your work contains Retouch's code or delivers
+Retouch's functionality to others, the permissions and restrictions for that
+Software still apply.
+
+6. Separate permission
+
+The Licensor may grant a separate commercial license or written permission.
+That permission must identify the authorized offering or activity. It applies
+only within its stated scope; silence, public availability of the source code
+and permission granted to someone else do not constitute permission for you.
+
+7. Other rights and termination
+
+This license does not transfer ownership or grant rights to the Licensor's
+trademarks. Rights not granted here are reserved. Your permissions under this
+license end automatically if you violate its terms and may be reinstated by
+the Licensor's written permission. This does not end the permissions of
+recipients who comply with these terms or restrict rights that applicable law
+gives you independently of this license.
+
+8. Warranty and liability
+
+To the extent permitted by applicable law, the Software is supplied as is.
+The Licensor provides no warranties, including warranties of fitness for a
+particular purpose, merchantability or non-infringement. You bear the risk of
+using the Software. The Licensor is not liable for losses, damages or claims
+arising from the Software or this license. These exclusions do not apply to
+liability that applicable law does not allow to be excluded.
